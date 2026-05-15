@@ -1,0 +1,1528 @@
+import PhotosUI
+import SwiftData
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+
+/// 與後端 `QUALITY_TASK_HOUSEHOLD_POINT_ID_PREFIX` 一致：`repository` 群組點位 `id` 為此前綴 + `group.uuid`。
+private let qualityTaskHouseholdPointIdPrefix = "qt-hh:"
+
+/// 任務在平面圖上的空間錨點（多為 Web PlanViewer／pdf.js 畫布像素；亦可能為 0…1 正規化）。
+private struct TaskSpaceMarker: Equatable {
+    let x: Double
+    let y: Double
+    let title: String
+    let taskCount: Int
+    let incompleteTaskCount: Int
+}
+
+struct TaskDetailView: View {
+    let projectCode: String
+    let taskId: String
+    /// 列表帶入的圖面 id（詳情 API 缺欄位或離線僅有列表快取時仍可載入平面圖）。
+    var qualityDrawingIdHint: String? = nil
+    let onClose: () -> Void
+
+    @Environment(SessionStore.self) private var session
+    @Environment(NetworkPathMonitor.self) private var network
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var detail: QualityTaskDetailResponseDto?
+    @State private var resolvedDrawingId: String?
+    @State private var floorImageURL: URL?
+    @State private var floorImageFallbackURL: URL?
+    @State private var offlineFloorImage: UIImage?
+    @State private var offlineMarkerReferenceSize: CGSize = .zero
+    @State private var roomPoints: [QualityTaskRoomPointDto] = []
+    @State private var spaceMarker: TaskSpaceMarker?
+    @State private var loadError: String?
+    @State private var floorPlanError: String?
+    @State private var showMainSheet = true
+    @State private var showTaskEditSheet = false
+    @State private var bottomTab: BottomTab = .task
+    @State private var showAddExecution = false
+    @State private var isLoading = true
+    @State private var pendingExecutions: [PendingExecutionOutbox] = []
+    @State private var executionSaveNotice: String?
+    @State private var editingLedgerExecution: TaskLedgerEntryDto?
+    @State private var executionEditDraftText = ""
+    @State private var executionEditError: String?
+    @State private var isSavingExecutionEdit = false
+    @State private var showDeleteExecutionConfirm = false
+    @State private var pendingDeleteLedgerEntry: TaskLedgerEntryDto?
+
+    enum BottomTab: String, CaseIterable, Identifiable {
+        case task = "任務資料"
+        case records = "執行紀錄"
+        var id: String { rawValue }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack(alignment: .top) {
+                FloorPlanCanvasView(
+                    projectCode: projectCode,
+                    qualityDrawingId: resolvedDrawingId,
+                    imageURL: floorImageURL,
+                    fallbackImageURL: floorImageFallbackURL,
+                    offlineImage: offlineFloorImage,
+                    offlineMarkerReferenceSize: offlineMarkerReferenceSize,
+                    spaceId: session.spaceId,
+                    marker: spaceMarker,
+                    loadError: $floorPlanError
+                )
+                    .ignoresSafeArea()
+
+                // 錯誤提示須放在**上方**：`.sheet` 半屏會蓋住螢幕下半部，先前放在底部等於被白底遮住。
+                VStack(spacing: 0) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Group {
+                            if (floorPlanError?.isEmpty == false) || (loadError?.isEmpty == false) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    if let fp = floorPlanError, !fp.isEmpty {
+                                        Text(fp)
+                                            .font(.caption2)
+                                            .multilineTextAlignment(.leading)
+                                            .foregroundStyle(.primary)
+                                    }
+                                    if let le = loadError, !le.isEmpty {
+                                        Text(le)
+                                            .font(.caption2)
+                                            .multilineTextAlignment(.leading)
+                                            .foregroundStyle(.primary)
+                                    }
+                                }
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            } else {
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        Spacer(minLength: 8)
+                        if !showMainSheet {
+                            Button {
+                                showMainSheet = true
+                            } label: {
+                                Image(systemName: "doc.text.fill")
+                                    .symbolRenderingMode(.hierarchical)
+                                    .font(.title2)
+                                    .padding(4)
+                            }
+                            .accessibilityLabel("任務資料")
+                            .accessibilityHint("開啟任務資料與執行紀錄")
+                        }
+                        Button(action: onClose) {
+                            Image(systemName: "xmark.circle.fill")
+                                .symbolRenderingMode(.hierarchical)
+                                .font(.title2)
+                                .padding(4)
+                        }
+                        .accessibilityLabel("關閉")
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 6)
+                    Spacer()
+                }
+            }
+            .navigationBarHidden(true)
+            .toolbar(.hidden, for: .navigationBar)
+            .sheet(isPresented: $showMainSheet) {
+                mainBottomSheet
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+            .overlay {
+                if isLoading, detail == nil { ProgressView("載入中…").padding().background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12)) }
+            }
+            .onChange(of: showMainSheet) { _, visible in
+                if !visible {
+                    showAddExecution = false
+                    showTaskEditSheet = false
+                }
+            }
+            .task {
+                await loadAll()
+                refreshPendingExecutions()
+            }
+            .onChange(of: network.isConnected) { _, online in
+                guard online, let sid = session.spaceId else { return }
+                Task {
+                    await OutboxSync.flushPending(modelContext: modelContext, spaceId: sid, isOnline: true)
+                    refreshPendingExecutions()
+                    await loadAll()
+                }
+            }
+        }
+        .dismissKeyboardOnTapOutside()
+    }
+
+    private func refreshPendingExecutions() {
+        pendingExecutions = (try? ExecutionOutbox.pendingForTask(
+            projectCode: projectCode,
+            taskId: taskId,
+            context: modelContext
+        )) ?? []
+    }
+
+    private var mainBottomSheet: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("", selection: $bottomTab) {
+                    ForEach(BottomTab.allCases) { t in
+                        Text(t.rawValue).tag(t)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding()
+
+                if bottomTab == .task {
+                    if let r = taskEditBlockedReason {
+                        Text(r)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 6)
+                    } else if let hint = taskEditLimitedToAssignmentHint {
+                        Text(hint)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 6)
+                    }
+                }
+
+                Group {
+                    switch bottomTab {
+                    case .task:
+                        taskMetaScroll
+                    case .records:
+                        executionList
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+            .navigationTitle("任務")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("編輯") {
+                        showTaskEditSheet = true
+                    }
+                    .disabled(detail?.task == nil || taskEditBlockedReason != nil)
+                }
+            }
+        }
+        // 從「任務資料」sheet 內再 present，才可與主 sheet 疊加；勿與外層 `showMainSheet` 並列兩個 `.sheet`。
+        .sheet(isPresented: $showAddExecution) {
+            AddExecutionSheet(
+                onCancel: { showAddExecution = false },
+                onSave: { text, attachments in
+                    let ok = await saveNewExecution(reply: text, attachments: attachments)
+                    if ok { showAddExecution = false }
+                    return ok
+                }
+            )
+            .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showTaskEditSheet) {
+            Group {
+                if let t = detail?.task, let sid = session.spaceId,
+                   let qdid = resolvedQualityDrawingId(for: t), !qdid.isEmpty
+                {
+                    TaskDetailTaskEditSheet(
+                        projectCode: projectCode,
+                        qualityDrawingId: qdid,
+                        taskId: taskId,
+                        spaceId: sid,
+                        initialTask: t,
+                        assignmentFieldsOnly: QualityTaskEditEligibility.nonAssignmentFieldsLocked(task: t),
+                        onCancel: { showTaskEditSheet = false },
+                        onSaved: {
+                            showTaskEditSheet = false
+                            await loadAll()
+                        }
+                    )
+                } else {
+                    NavigationStack {
+                        ContentUnavailableView("無法編輯", systemImage: "exclamationmark.triangle")
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button("關閉") { showTaskEditSheet = false }
+                                }
+                            }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private var taskMetaScroll: some View {
+        ScrollView {
+            if let t = detail?.task {
+                taskInfoSections(task: t)
+                    .padding()
+            } else if let row = cachedListRow {
+                VStack(alignment: .leading, spacing: 12) {
+                    LabeledContent("名稱", value: row.title)
+                    if let st = row.status {
+                        LabeledContent("狀態", value: QualityTaskStatusLabels.displayName(for: st))
+                    }
+                    if let drawing = row.drawingName, !drawing.isEmpty {
+                        LabeledContent("平面圖", value: drawing)
+                    }
+                    if !network.isConnected {
+                        Text("離線：顯示列表快取資料，連線後可載入完整任務內容。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding()
+            } else {
+                ContentUnavailableView("無資料", systemImage: "doc")
+            }
+        }
+        .dismissKeyboardOnScroll()
+    }
+
+    @ViewBuilder
+    private func taskInfoSections(task t: QualityTaskDto) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            LabeledContent("名稱", value: t.name)
+            if let st = t.status {
+                LabeledContent("狀態", value: QualityTaskStatusLabels.displayName(for: st))
+            }
+            if let drawing = t.qualityDrawing?.name, !drawing.isEmpty {
+                LabeledContent("平面圖", value: drawing)
+            }
+            if let pr = t.priority, !pr.isEmpty { LabeledContent("優先級", value: pr) }
+            if let cat = t.category?.value, !cat.isEmpty { LabeledContent("類別", value: cat) }
+            if let g = t.group?.name, !g.isEmpty { LabeledContent("群組", value: g) }
+            if let room = t.room?.name, !room.isEmpty { LabeledContent("空間", value: room) }
+            LabeledContent("執行對象", value: Self.executorLabel(for: t))
+            if let reviewer = t.reviewer?.displayName ?? t.reviewer?.username, !reviewer.isEmpty {
+                LabeledContent("審查人", value: reviewer)
+            }
+            if let due = t.dueDate {
+                LabeledContent("到期日", value: due.formatted(date: .abbreviated, time: .omitted))
+            }
+            if let created = t.createdAt {
+                LabeledContent("建立時間", value: created.formatted(date: .abbreviated, time: .shortened))
+            }
+            if let desc = t.description, !desc.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("說明").font(.subheadline).foregroundStyle(.secondary)
+                    Text(desc).font(.body)
+                }
+            }
+        }
+    }
+
+    private var cachedListRow: CachedTaskRow? {
+        let rows = (try? LocalTaskCache.tasks(projectCode: projectCode, context: modelContext)) ?? []
+        return rows.first { $0.taskId == taskId }
+    }
+
+    /// 後端 PATCH 任務須帶品質圖面 id（巢狀路由）。
+    private var hasQualityDrawingForEdit: Bool {
+        if let id = resolvedQualityDrawingId(for: detail?.task), !id.isEmpty { return true }
+        return false
+    }
+
+    /// 無法開啟「編輯」時的原因（與 Web 工作台一致）。
+    private var taskEditBlockedReason: String? {
+        guard let t = detail?.task else { return "尚未載入任務資料。" }
+        return QualityTaskEditEligibility.taskEditSheetBlockedReason(
+            task: t,
+            userId: session.currentUser?.id,
+            isOnline: network.isConnected,
+            hasQualityDrawing: hasQualityDrawingForEdit
+        )
+    }
+
+    /// 可編輯但僅限審查人時的補充說明。
+    private var taskEditLimitedToAssignmentHint: String? {
+        guard let t = detail?.task else { return nil }
+        guard taskEditBlockedReason == nil else { return nil }
+        guard QualityTaskEditEligibility.nonAssignmentFieldsLocked(task: t) else { return nil }
+        return "任務建立已超過三天，僅能修改審查人；執行對象請至網頁工作台調整。"
+    }
+
+    private static func executorLabel(for task: QualityTaskDto) -> String {
+        let name = task.executor?.displayName ?? task.executor?.name ?? task.executor?.username
+        switch task.executorType?.lowercased() {
+        case "group":
+            return name.map { "群組 · \($0)" } ?? (task.group?.name ?? "群組")
+        case "user":
+            return name.map { "個人 · \($0)" } ?? "個人"
+        default:
+            return name ?? "—"
+        }
+    }
+
+    private var executionList: some View {
+        List {
+            if !network.isConnected {
+                Section {
+                    Label("離線模式：執行紀錄將暫存，連線後自動上傳", systemImage: "icloud.and.arrow.up")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let notice = executionSaveNotice, !notice.isEmpty {
+                Section {
+                    Text(notice)
+                        .font(.footnote)
+                        .foregroundStyle(.green)
+                }
+            }
+            ForEach(pendingExecutions, id: \.localId) { pending in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(session.currentUser?.displayName ?? "我")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Spacer()
+                        Text("待上傳")
+                            .font(.caption2)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.orange.opacity(0.2), in: Capsule())
+                            .foregroundStyle(.orange)
+                    }
+                    if !pending.executionReply.isEmpty {
+                        Text(pending.executionReply).font(.body)
+                    }
+                    let photoCount = ExecutionOutbox.photoCount(for: pending)
+                    if photoCount > 0 {
+                        Label("\(photoCount) 張照片（待上傳）", systemImage: "photo")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(pending.enqueuedAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+            if let ledger = detail?.ledger, !ledger.isEmpty, let task = detail?.task {
+                Section {
+                    ForEach(ledger) { entry in
+                        ledgerRow(entry: entry, task: task)
+                            .contextMenu {
+                                if network.isConnected,
+                                   TaskLedgerPresentation.canModifyDraftExecution(
+                                       entry: entry,
+                                       task: task,
+                                       currentUserId: session.currentUser?.id
+                                   )
+                                {
+                                    Button("編輯說明") {
+                                        executionEditDraftText = entry.body ?? ""
+                                        executionEditError = nil
+                                        editingLedgerExecution = entry
+                                    }
+                                    Button("刪除", role: .destructive) {
+                                        pendingDeleteLedgerEntry = entry
+                                        showDeleteExecutionConfirm = true
+                                    }
+                                }
+                            }
+                    }
+                } header: {
+                    ledgerTableHeader
+                }
+            } else if let items = detail?.latestSubmission?.executions, !items.isEmpty {
+                Section {
+                    ForEach(items) { ex in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(ex.executor?.displayName ?? ex.executor?.username ?? "—")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                            if let r = ex.executionReply, !r.isEmpty { Text(r).font(.body) }
+                            let attCount = ex.attachments?.count ?? 0
+                            if attCount > 0 {
+                                Label("\(attCount) 個附件", systemImage: "paperclip")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let d = ex.executedAt {
+                                Text(d.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("執行紀錄")
+                }
+            }
+            Section {
+                Button {
+                    executionSaveNotice = nil
+                    showAddExecution = true
+                } label: {
+                    Label("新增執行紀錄", systemImage: "plus.circle.fill")
+                }
+            }
+        }
+        .sheet(item: $editingLedgerExecution) { entry in
+            NavigationStack {
+                Form {
+                    Section {
+                        TextField("執行說明", text: $executionEditDraftText, axis: .vertical)
+                            .lineLimit(4 ... 14)
+                    }
+                    if let executionEditError, !executionEditError.isEmpty {
+                        Section {
+                            Text(executionEditError)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+                .navigationTitle("編輯執行紀錄")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") {
+                            editingLedgerExecution = nil
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("儲存") {
+                            Task { await saveLedgerExecutionEdit(executionId: entry.id) }
+                        }
+                        .disabled(isSavingExecutionEdit)
+                    }
+                }
+                .onAppear {
+                    executionEditDraftText = entry.body ?? ""
+                    executionEditError = nil
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
+        .confirmationDialog("刪除此筆執行紀錄？", isPresented: $showDeleteExecutionConfirm, titleVisibility: .visible) {
+            Button("刪除", role: .destructive) {
+                let entry = pendingDeleteLedgerEntry
+                pendingDeleteLedgerEntry = nil
+                if let entry {
+                    Task { await deleteLedgerExecution(entry: entry) }
+                }
+            }
+            Button("取消", role: .cancel) {
+                pendingDeleteLedgerEntry = nil
+            }
+        } message: {
+            Text("此動作無法復原。僅未送出、三天內且由您建立的執行紀錄可刪除。")
+        }
+    }
+
+    private var ledgerTableHeader: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("時間")
+                .frame(width: 108, alignment: .leading)
+            Text("類型")
+                .frame(width: 72, alignment: .leading)
+            Text("人員／說明")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("輪次")
+                .frame(width: 36, alignment: .center)
+            Text("附件")
+                .frame(width: 36, alignment: .trailing)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .textCase(nil)
+    }
+
+    @ViewBuilder
+    private func ledgerRow(entry: TaskLedgerEntryDto, task: QualityTaskDto) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(entry.occurredAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption)
+                .frame(width: 108, alignment: .leading)
+            Text(TaskLedgerPresentation.kindLabel(entry.kind))
+                .font(.caption2)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color(.systemGray5), in: Capsule())
+                .frame(width: 72, alignment: .leading)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.actor.displayName ?? entry.actor.username ?? entry.actor.id)
+                    .font(.subheadline.weight(.medium))
+                if let body = entry.body, !body.isEmpty {
+                    Text(body)
+                        .font(.footnote)
+                        .foregroundStyle(.primary)
+                }
+                if let r = entry.result, !r.isEmpty {
+                    Text(QualityTaskStatusLabels.displayName(for: r))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(entry.round.map { String($0) } ?? "—")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .center)
+            Text("\(entry.attachments?.count ?? 0)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .trailing)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func saveLedgerExecutionEdit(executionId: String) async {
+        guard let sid = session.spaceId else {
+            executionEditError = "缺少 Space。"
+            return
+        }
+        guard let qdid = resolvedQualityDrawingId(for: detail?.task), !qdid.isEmpty else {
+            executionEditError = "缺少平面圖資訊。"
+            return
+        }
+        isSavingExecutionEdit = true
+        executionEditError = nil
+        defer { isSavingExecutionEdit = false }
+        let trimmed = executionEditDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try await QualityTaskAPI.updateExecution(
+                projectCode: projectCode,
+                qualityDrawingId: qdid,
+                taskId: taskId,
+                executionId: executionId,
+                body: UpdateExecutionBody(executionReply: trimmed.isEmpty ? nil : trimmed),
+                spaceId: sid
+            )
+            editingLedgerExecution = nil
+            await loadAll()
+            refreshPendingExecutions()
+        } catch {
+            executionEditError = error.localizedDescription
+        }
+    }
+
+    private func deleteLedgerExecution(entry: TaskLedgerEntryDto) async {
+        guard let sid = session.spaceId else {
+            loadError = "缺少 Space。"
+            return
+        }
+        guard let qdid = resolvedQualityDrawingId(for: detail?.task), !qdid.isEmpty else {
+            loadError = "缺少平面圖資訊。"
+            return
+        }
+        do {
+            try await QualityTaskAPI.deleteExecution(
+                projectCode: projectCode,
+                qualityDrawingId: qdid,
+                taskId: taskId,
+                executionId: entry.id,
+                spaceId: sid
+            )
+            await loadAll()
+            refreshPendingExecutions()
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    private func loadAll() async {
+        isLoading = true
+        floorPlanError = nil
+        loadError = nil
+        offlineFloorImage = nil
+        offlineMarkerReferenceSize = .zero
+        defer { isLoading = false }
+        guard let sid = session.spaceId else {
+            let msg = "尚未選擇 Space，無法載入任務。"
+            loadError = msg
+            return
+        }
+        do {
+            if network.isConnected {
+                let d = try await QualityTaskAPI.taskDetail(projectCode: projectCode, taskId: taskId, spaceId: sid)
+                detail = d
+                try LocalTaskCache.saveDetail(d, projectCode: projectCode, taskId: taskId, context: modelContext)
+                try modelContext.save()
+                await loadPlanForTask(task: d.task, spaceId: sid, preferNetwork: true)
+            } else {
+                detail = try LocalTaskCache.loadDetail(projectCode: projectCode, taskId: taskId, context: modelContext)
+                await loadPlanForTask(task: detail?.task, spaceId: sid, preferNetwork: false)
+                if detail == nil {
+                    loadError = "離線暫存中無此任務詳情，請先連線開啟一次任務。"
+                }
+            }
+        } catch {
+            loadError = error.localizedDescription
+            detail = try? LocalTaskCache.loadDetail(projectCode: projectCode, taskId: taskId, context: modelContext)
+            await loadPlanForTask(task: detail?.task, spaceId: sid, preferNetwork: false)
+        }
+    }
+
+    private func resolvedQualityDrawingId(for task: QualityTaskDto?) -> String? {
+        if let id = task?.qualityDrawing?.id, !id.isEmpty { return id }
+        if let hint = qualityDrawingIdHint, !hint.isEmpty { return hint }
+        return cachedListRow?.drawingId
+    }
+
+    private func loadPlanForTask(task: QualityTaskDto?, spaceId: String, preferNetwork: Bool) async {
+        guard let qdid = resolvedQualityDrawingId(for: task) else {
+            resolvedDrawingId = nil
+            floorImageURL = nil
+            floorImageFallbackURL = nil
+            spaceMarker = nil
+            if task != nil {
+                floorPlanError = "此任務未關聯平面圖。"
+            }
+            return
+        }
+        resolvedDrawingId = qdid
+        await applyPlanFromCache(qualityDrawingId: qdid, task: task)
+
+        guard preferNetwork, network.isConnected else { return }
+        do {
+            async let drawingTask = QualityTaskAPI.drawingDetail(
+                projectCode: projectCode,
+                qualityDrawingId: qdid,
+                spaceId: spaceId
+            )
+            async let pointsTask = QualityTaskAPI.roomPoints(
+                projectCode: projectCode,
+                qualityDrawingId: qdid,
+                spaceId: spaceId
+            )
+            let (drawing, pts) = try await (drawingTask, pointsTask)
+            roomPoints = pts
+            let (primaryURL, fallbackURL) = Self.floorImagePrimaryAndFallback(for: drawing.drawing.file)
+            floorImageURL = primaryURL
+            floorImageFallbackURL = fallbackURL
+            if floorImageURL == nil {
+                floorPlanError =
+                    drawing.drawing.file == nil
+                    ? "此品質圖面尚未上傳檔案，無法顯示平面圖。"
+                    : "無法組出圖檔網址，請確認 API 設定。"
+            } else if offlineFloorImage != nil {
+                floorPlanError = nil
+            }
+            if let task {
+                spaceMarker = resolveTaskSpaceMarker(task: task, points: pts)
+            }
+            if let data = await PlanAssetCache.downloadImageData(file: drawing.drawing.file, spaceId: spaceId) {
+                try? await PlanAssetCache.persistImageData(
+                    projectCode: projectCode,
+                    qualityDrawingId: qdid,
+                    imageData: data,
+                    context: modelContext
+                )
+                await applyPlanFromCache(qualityDrawingId: qdid, task: task)
+            }
+        } catch {
+            if offlineFloorImage == nil {
+                floorPlanError = error.localizedDescription
+            }
+        }
+    }
+
+    private func applyPlanFromCache(qualityDrawingId: String, task: QualityTaskDto?) async {
+        await PlanAssetCache.repairCachedPNGs(projectCode: projectCode, context: modelContext)
+        guard let bundle = try? PlanAssetCache.loadBundle(
+            projectCode: projectCode,
+            qualityDrawingId: qualityDrawingId,
+            context: modelContext
+        ) else { return }
+        if !bundle.points.isEmpty {
+            roomPoints = bundle.points
+        }
+        if let img = bundle.image {
+            offlineFloorImage = img
+            offlineMarkerReferenceSize = bundle.markerReferenceSize
+            floorPlanError = nil
+        } else if offlineFloorImage == nil, !bundle.points.isEmpty {
+            let ref = bundle.markerReferenceSize
+            offlineFloorImage = FloorPlanRasterDecoder.placeholderCanvas(markerReferenceSize: ref)
+            offlineMarkerReferenceSize = ref
+            if floorPlanError == nil {
+                floorPlanError = "平面圖暫存尚無圖檔；請在設定確認已下載暫存。"
+            }
+        }
+        if let task {
+            spaceMarker = resolveTaskSpaceMarker(task: task, points: bundle.points)
+        }
+    }
+
+    /// 主檔優先（完整 PDF／原圖），必要時再試縮圖；下載或解碼失敗時由 `SpaceAuthenticatedImageView` 自動改試備援 URL。
+    private static func floorImagePrimaryAndFallback(for file: DrawingFileDto?) -> (URL?, URL?) {
+        guard let file else { return (nil, nil) }
+        let full = URLResolver.absoluteAssetURL(file.url)
+        let thumb = URLResolver.absoluteAssetURL(file.thumbnailUrl)
+        let primary = full ?? thumb
+        let fallback: URL?
+        if let f = full, let t = thumb, f.absoluteString != t.absoluteString {
+            fallback = (primary?.absoluteString == f.absoluteString) ? t : f
+        } else {
+            fallback = nil
+        }
+        return (primary, fallback)
+    }
+
+    private func resolveTaskSpaceMarker(task: QualityTaskDto, points: [QualityTaskRoomPointDto]) -> TaskSpaceMarker? {
+        let matched: QualityTaskRoomPointDto?
+        let roomKey = (task.room?.id).flatMap { $0.isEmpty ? nil : $0 } ?? (task.roomId).flatMap { $0.isEmpty ? nil : $0 }
+        let groupKey = (task.group?.id).flatMap { $0.isEmpty ? nil : $0 } ?? (task.groupId).flatMap { $0.isEmpty ? nil : $0 }
+        if let roomId = roomKey {
+            matched = points.first { $0.id == roomId }
+        } else if let groupId = groupKey {
+            let compositeId = "\(qualityTaskHouseholdPointIdPrefix)\(groupId)"
+            matched = points.first { $0.id == compositeId || $0.groupId == groupId }
+        } else {
+            matched = nil
+        }
+        guard let p = matched else { return nil }
+        let title = task.room?.name ?? task.group?.name ?? p.name
+        return TaskSpaceMarker(
+            x: p.x,
+            y: p.y,
+            title: title,
+            taskCount: p.taskCount ?? 0,
+            incompleteTaskCount: p.incompleteTaskCount ?? 0
+        )
+    }
+
+    private func saveNewExecution(reply: String, attachments: [(data: Data, filename: String, mimeType: String)]) async -> Bool {
+        guard let sid = session.spaceId else {
+            loadError = "缺少 Space，無法儲存執行紀錄。"
+            return false
+        }
+        guard let qdid = detail?.task.qualityDrawing?.id ?? resolvedDrawingId ?? qualityDrawingIdHint else {
+            loadError = "無法儲存：此任務缺少平面圖資訊。"
+            return false
+        }
+        let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        if network.isConnected {
+            do {
+                let res = try await QualityTaskAPI.createExecution(
+                    projectCode: projectCode,
+                    qualityDrawingId: qdid,
+                    taskId: taskId,
+                    executionReply: trimmed.isEmpty ? nil : trimmed,
+                    attachments: attachments,
+                    spaceId: sid
+                )
+                if let w = res.uploadWarnings, !w.isEmpty {
+                    loadError = w.map { "\($0.filename)：\($0.error)" }.joined(separator: "；")
+                }
+                executionSaveNotice = nil
+                await loadAll()
+                refreshPendingExecutions()
+                return true
+            } catch {
+                loadError = error.localizedDescription
+                return false
+            }
+        } else {
+            do {
+                try ExecutionOutbox.enqueue(
+                    projectCode: projectCode,
+                    qualityDrawingId: qdid,
+                    taskId: taskId,
+                    executionReply: trimmed,
+                    photos: attachments,
+                    context: modelContext
+                )
+                loadError = nil
+                executionSaveNotice = attachments.isEmpty
+                    ? "已暫存執行說明，連線後將自動上傳。"
+                    : "已暫存執行說明與 \(attachments.count) 張照片，連線後將自動上傳。"
+                refreshPendingExecutions()
+                return true
+            } catch {
+                loadError = error.localizedDescription
+                return false
+            }
+        }
+    }
+}
+
+// MARK: - 平面圖縮放／平移（對齊 constructionApp `SiteRecordPlanZoomPanView`）
+
+/// 將圖片置於 bounds 內 **aspectFit**（與網頁版、現場 App 平面圖邏輯一致）。
+private func qualityTaskAspectFitImageRect(imageSize: CGSize, in bounds: CGSize) -> CGRect {
+    guard imageSize.width > 0, imageSize.height > 0, bounds.width > 0, bounds.height > 0 else { return .zero }
+    let ir = imageSize.width / imageSize.height
+    let br = bounds.width / bounds.height
+    let w: CGFloat
+    let h: CGFloat
+    if ir > br {
+        w = bounds.width
+        h = bounds.width / ir
+    } else {
+        h = bounds.height
+        w = bounds.height * ir
+    }
+    let x = (bounds.width - w) / 2
+    let y = (bounds.height - h) / 2
+    return CGRect(x: x, y: y, width: w, height: h)
+}
+
+/// 平面圖內容座標（縮放前）→ 目前螢幕座標；與 Web `PointMarker` 位置計算一致。
+private func qualityTaskPlanScreenPoint(
+    local: CGPoint,
+    bounds: CGSize,
+    scale: CGFloat,
+    offset: CGSize
+) -> CGPoint {
+    let cx = bounds.width / 2
+    let cy = bounds.height / 2
+    return CGPoint(
+        x: cx + (local.x - cx) * scale + offset.width,
+        y: cy + (local.y - cy) * scale + offset.height
+    )
+}
+
+/// 雙指以**觸控中心**為錨點縮放（`UIPinchGestureRecognizer`）、單指平移、雙擊還原；透明 overlay 接觸控，下層圖不搶手勢。
+private struct QualityTaskFloorPlanZoomPanView: View {
+    let image: UIImage
+    let markerReferenceSize: CGSize
+    let marker: TaskSpaceMarker?
+
+    @State private var committedScale: CGFloat = 1
+    @State private var committedOffset: CGSize = .zero
+
+    var body: some View {
+        GeometryReader { geo in
+            let bounds = geo.size
+            let fitted = qualityTaskAspectFitImageRect(imageSize: image.size, in: bounds)
+            ZStack {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: fitted.width, height: fitted.height)
+                    .position(x: fitted.midX, y: fitted.midY)
+                    .frame(width: bounds.width, height: bounds.height)
+                    .scaleEffect(committedScale, anchor: .center)
+                    .offset(committedOffset)
+                    .allowsHitTesting(false)
+
+                if let marker {
+                    let (px, py) = markerNormalizedFractions(marker: marker)
+                    let local = CGPoint(
+                        x: fitted.minX + px * fitted.width,
+                        y: fitted.minY + py * fitted.height
+                    )
+                    let screen = qualityTaskPlanScreenPoint(
+                        local: local,
+                        bounds: bounds,
+                        scale: committedScale,
+                        offset: committedOffset
+                    )
+                    taskSpaceMarkerBadge(marker: marker)
+                        .position(x: screen.x, y: screen.y)
+                        .allowsHitTesting(false)
+                }
+
+                QualityTaskPlanInteractionOverlay(
+                    bounds: bounds,
+                    scale: $committedScale,
+                    offset: $committedOffset
+                )
+                .frame(width: bounds.width, height: bounds.height)
+            }
+            .clipped()
+            .overlay(alignment: .bottomTrailing) {
+                Text(String(format: "%.0f%%", committedScale * 100))
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .padding(10)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func taskSpaceMarkerBadge(marker: TaskSpaceMarker) -> some View {
+        let hasIncomplete = marker.incompleteTaskCount > 0
+        let borderColor: Color = hasIncomplete ? .red : .green
+        let countTextColor: Color = hasIncomplete ? .red : .green
+
+        ZStack(alignment: .center) {
+            Circle()
+                .fill(.white)
+                .frame(width: 38, height: 38)
+                .overlay(
+                    Circle()
+                        .stroke(borderColor, lineWidth: 3)
+                )
+                .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
+
+            if marker.taskCount > 0 {
+                Text(String(marker.taskCount))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(countTextColor)
+            } else {
+                Image(systemName: "mappin.circle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(borderColor)
+                    .symbolRenderingMode(.hierarchical)
+            }
+        }
+    }
+
+    /// 將後端／Web 畫布座標換算為在 `fitted` 內的 0…1 比例（相對於顯示用 `image.size`）。
+    private func markerNormalizedFractions(marker: TaskSpaceMarker) -> (CGFloat, CGFloat) {
+        let rw = markerReferenceSize.width
+        let rh = markerReferenceSize.height
+        guard rw > 0, rh > 0 else { return (0, 0) }
+        return (CGFloat(marker.x) / rw, CGFloat(marker.y) / rh)
+    }
+}
+
+// MARK: - 平面圖手勢（雙指錨點縮放）
+
+/// 繞 `bounds` 中心縮放並帶 `offset` 時，求螢幕點 `focal` 下對應的「內容座標」（與 `planLayer` 區域對齊之座標系）。
+private enum QualityTaskPlanZoomMath {
+    static let minScale: CGFloat = 0.2
+    static let maxScale: CGFloat = 6
+
+    static func clampScale(_ s: CGFloat) -> CGFloat {
+        min(max(s, minScale), maxScale)
+    }
+
+    /// 在 `(scale, offset)` 下，螢幕點 `focal` 對應的內容點（未縮放前以中心為原點之線性座標）。
+    static func contentPoint(
+        bounds: CGSize,
+        focal: CGPoint,
+        scale: CGFloat,
+        offset: CGSize
+    ) -> CGPoint {
+        let cx = bounds.width / 2
+        let cy = bounds.height / 2
+        guard scale > 0.000_1 else { return CGPoint(x: cx, y: cy) }
+        return CGPoint(
+            x: cx + (focal.x - offset.width - cx) / scale,
+            y: cy + (focal.y - offset.height - cy) / scale
+        )
+    }
+
+    /// 縮放改為 `newScale` 後，使內容點 `content` 仍落在螢幕點 `focal` 上所需之 offset。
+    static func offsetKeepingContentAtFocal(
+        bounds: CGSize,
+        content: CGPoint,
+        focal: CGPoint,
+        newScale: CGFloat
+    ) -> CGSize {
+        let cx = bounds.width / 2
+        let cy = bounds.height / 2
+        return CGSize(
+            width: focal.x - cx - (content.x - cx) * newScale,
+            height: focal.y - cy - (content.y - cy) * newScale
+        )
+    }
+}
+
+private struct QualityTaskPlanInteractionOverlay: UIViewRepresentable {
+    var bounds: CGSize
+    @Binding var scale: CGFloat
+    @Binding var offset: CGSize
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(scale: $scale, offset: $offset)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView()
+        v.backgroundColor = .clear
+        v.isMultipleTouchEnabled = true
+
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
+        pinch.delegate = context.coordinator
+        v.addGestureRecognizer(pinch)
+
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        pan.minimumNumberOfTouches = 1
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+        v.addGestureRecognizer(pan)
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        v.addGestureRecognizer(doubleTap)
+        pan.require(toFail: doubleTap)
+
+        context.coordinator.pinch = pinch
+        context.coordinator.pan = pan
+        _ = doubleTap
+        return v
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.boundsSize = bounds
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        @Binding var scale: CGFloat
+        @Binding var offset: CGSize
+        var boundsSize: CGSize = .zero
+
+        weak var pinch: UIPinchGestureRecognizer?
+        weak var pan: UIPanGestureRecognizer?
+
+        private var pinchBaseScale: CGFloat = 1
+        private var pinchBaseOffset: CGSize = .zero
+        private var pinchFocal0: CGPoint = .zero
+        private var pinchAnchorContent: CGPoint = .zero
+        private var panStartOffset: CGSize = .zero
+
+        init(scale: Binding<CGFloat>, offset: Binding<CGSize>) {
+            _scale = scale
+            _offset = offset
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            false
+        }
+
+        @objc func handlePinch(_ g: UIPinchGestureRecognizer) {
+            guard let view = g.view else { return }
+            let b = boundsSize
+            guard b.width > 0, b.height > 0 else { return }
+
+            switch g.state {
+            case .began:
+                pinchBaseScale = scale
+                pinchBaseOffset = offset
+                pinchFocal0 = g.location(in: view)
+                pinchAnchorContent = QualityTaskPlanZoomMath.contentPoint(
+                    bounds: b,
+                    focal: pinchFocal0,
+                    scale: pinchBaseScale,
+                    offset: pinchBaseOffset
+                )
+            case .changed:
+                let S0 = pinchBaseScale
+                let S1 = QualityTaskPlanZoomMath.clampScale(S0 * g.scale)
+                let focal = g.location(in: view)
+                let O1 = QualityTaskPlanZoomMath.offsetKeepingContentAtFocal(
+                    bounds: b,
+                    content: pinchAnchorContent,
+                    focal: focal,
+                    newScale: S1
+                )
+                scale = S1
+                offset = O1
+            case .ended, .cancelled, .failed:
+                pinchBaseScale = scale
+                pinchBaseOffset = offset
+            default:
+                break
+            }
+        }
+
+        @objc func handlePan(_ g: UIPanGestureRecognizer) {
+            switch g.state {
+            case .began:
+                panStartOffset = offset
+            case .changed:
+                let t = g.translation(in: g.view)
+                offset = CGSize(width: panStartOffset.width + t.x, height: panStartOffset.height + t.y)
+            case .ended, .cancelled, .failed:
+                panStartOffset = offset
+            default:
+                break
+            }
+        }
+
+        @objc func handleDoubleTap(_: UITapGestureRecognizer) {
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    self.scale = 1
+                    self.offset = .zero
+                }
+            }
+        }
+    }
+}
+
+/// 後端 `GET /files/...` 在 `requireSpaceMember` 之下，**必須**帶 `x-space-id`；`AsyncImage` 不會帶自訂 header，載入必定失敗。
+/// 主 URL 若 404 或解碼失敗（例如縮圖尚未產生），會依序改試 `fallbackURL`。
+private struct SpaceAuthenticatedImageView: View {
+    let projectCode: String
+    let qualityDrawingId: String?
+    let url: URL?
+    let fallbackURL: URL?
+    let offlineImage: UIImage?
+    let offlineMarkerReferenceSize: CGSize
+    let spaceId: String?
+    let marker: TaskSpaceMarker?
+    @Binding var loadError: String?
+
+    @Environment(\.modelContext) private var modelContext
+    @State private var image: UIImage?
+    @State private var markerReferenceSize: CGSize = .zero
+    @State private var didFail = false
+
+    /// 僅依 URL／Space 觸發下載，勿併入 `markerReferenceSize`（載入完成後會變動而導致重複請求）。
+    private var loadURLIdentity: String {
+        let offlineKey = offlineImage != nil ? "1" : "0"
+        return "\(url?.absoluteString ?? "")|\(fallbackURL?.absoluteString ?? "")|\(spaceId ?? "")|\(offlineKey)|\(qualityDrawingId ?? "")"
+    }
+
+    /// 標記或參考尺寸變更時重置縮放視圖狀態（不重新下載二進位）。
+    private var zoomPanViewIdentity: String {
+        let m = marker.map { "\($0.x)|\($0.y)|\($0.title)" } ?? ""
+        let ref = "\(markerReferenceSize.width)x\(markerReferenceSize.height)"
+        return "\(loadURLIdentity)|\(m)|\(ref)"
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                QualityTaskFloorPlanZoomPanView(
+                    image: image,
+                    markerReferenceSize: markerReferenceSize.width > 0 ? markerReferenceSize : image.size,
+                    marker: marker
+                )
+                    .id(zoomPanViewIdentity)
+            } else if didFail {
+                Image(systemName: "photo")
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.regular)
+                        .tint(.secondary)
+                    Text("載入平面圖…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .task(id: loadURLIdentity) { await load() }
+    }
+
+    private func load() async {
+        if let offlineImage {
+            let ref = offlineMarkerReferenceSize.width > 0
+                ? offlineMarkerReferenceSize
+                : offlineImage.size
+            await MainActor.run {
+                image = offlineImage
+                markerReferenceSize = ref
+                didFail = false
+                loadError = nil
+            }
+            return
+        }
+
+        guard let sid = spaceId, !sid.isEmpty else {
+            await MainActor.run {
+                image = nil
+                markerReferenceSize = .zero
+                didFail = false
+                loadError = "無法下載平面圖：尚未取得 Space（請確認已登入並選擇 Space）。"
+            }
+            return
+        }
+
+        var candidates: [URL] = []
+        if let u = url { candidates.append(u) }
+        if let f = fallbackURL,
+           !candidates.contains(where: { $0.absoluteString == f.absoluteString })
+        {
+            candidates.append(f)
+        }
+
+        guard !candidates.isEmpty else {
+            if await loadFromPlanCache() { return }
+            await MainActor.run {
+                image = nil
+                markerReferenceSize = .zero
+                didFail = true
+                loadError = "缺少圖檔網址。"
+            }
+            return
+        }
+
+        await MainActor.run {
+            didFail = false
+            image = nil
+            markerReferenceSize = .zero
+            loadError = nil
+        }
+
+        var lastError: String?
+        for candidate in candidates {
+            do {
+                let data = try await APIClient.shared.fetchBinary(url: candidate, spaceId: sid)
+                let decoded = await MainActor.run(body: { FloorPlanRasterDecoder.decode(from: data) })
+                if let decoded {
+                    await MainActor.run {
+                        image = decoded.image
+                        markerReferenceSize = decoded.markerReferenceSize
+                        didFail = false
+                        loadError = nil
+                    }
+                    return
+                }
+                lastError = "已下載圖檔但無法顯示（可能為不支援的格式）。"
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+
+        if await loadFromPlanCache() { return }
+
+        await MainActor.run {
+            image = nil
+            markerReferenceSize = .zero
+            didFail = true
+            loadError = lastError ?? "載入平面圖失敗。"
+        }
+    }
+
+    private func loadFromPlanCache() async -> Bool {
+        guard let qdid = qualityDrawingId else { return false }
+        await PlanAssetCache.repairCachedPNGs(projectCode: projectCode, context: modelContext)
+        guard let bundle = try? PlanAssetCache.loadBundle(
+            projectCode: projectCode,
+            qualityDrawingId: qdid,
+            context: modelContext
+        ) else { return false }
+        if let img = bundle.image {
+            await MainActor.run {
+                image = img
+                markerReferenceSize = bundle.markerReferenceSize
+                didFail = false
+                loadError = nil
+            }
+            return true
+        }
+        if !bundle.points.isEmpty {
+            let ref = bundle.markerReferenceSize
+            await MainActor.run {
+                image = FloorPlanRasterDecoder.placeholderCanvas(markerReferenceSize: ref)
+                markerReferenceSize = ref
+                didFail = false
+                loadError = "平面圖暫存尚無圖檔。"
+            }
+            return true
+        }
+        return false
+    }
+}
+
+private struct FloorPlanCanvasView: View {
+    let projectCode: String
+    let qualityDrawingId: String?
+    let imageURL: URL?
+    let fallbackImageURL: URL?
+    let offlineImage: UIImage?
+    let offlineMarkerReferenceSize: CGSize
+    let spaceId: String?
+    let marker: TaskSpaceMarker?
+    @Binding var loadError: String?
+
+    private var canShowPlan: Bool {
+        offlineImage != nil || imageURL != nil || fallbackImageURL != nil || qualityDrawingId != nil
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Color(white: 0.93)
+                if canShowPlan {
+                    SpaceAuthenticatedImageView(
+                        projectCode: projectCode,
+                        qualityDrawingId: qualityDrawingId,
+                        url: imageURL,
+                        fallbackURL: fallbackImageURL,
+                        offlineImage: offlineImage,
+                        offlineMarkerReferenceSize: offlineMarkerReferenceSize,
+                        spaceId: spaceId,
+                        marker: marker,
+                        loadError: $loadError
+                    )
+                        .frame(width: geo.size.width, height: geo.size.height)
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "map").font(.largeTitle).foregroundStyle(.secondary)
+                        Text("無法載入平面圖（離線或未指派圖面）").font(.caption).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    }
+                    .padding()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Add execution（含照片；後端每筆最多 3 個附件）
+
+/// 由 `PhotosPickerItem.loadTransferable` 讀入點陣圖（勿用已移除的 `PhotosPickerItem.itemProvider`）。
+private struct PickedUIImageForUpload: Transferable {
+    let uiImage: UIImage
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(importedContentType: UTType.image) { data in
+            guard let img = UIImage(data: data) else {
+                throw NSError(
+                    domain: "TaskDetail",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "無法解碼所選照片"]
+                )
+            }
+            return PickedUIImageForUpload(uiImage: img)
+        }
+    }
+}
+
+private enum ExecutionPhotoPickerSupport {
+    /// 轉成 JPEG 上傳（與後端 `allowedAttachmentMimeTypes` 之 `image/jpeg` 對齊）。
+    static func jpegPayload(from item: PhotosPickerItem) async throws -> (data: Data, filename: String, mimeType: String) {
+        let ui: UIImage
+        if let picked = try await item.loadTransferable(type: PickedUIImageForUpload.self) {
+            ui = picked.uiImage
+        } else if let data = try await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
+            ui = img
+        } else {
+            throw NSError(
+                domain: "TaskDetail",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "無法讀取所選照片"]
+            )
+        }
+        let toEncode = ui.resizedForUpload(maxLongEdge: 2400)
+        guard let jpeg = toEncode.jpegData(compressionQuality: 0.86) else {
+            throw NSError(
+                domain: "TaskDetail",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "無法產生照片資料"]
+            )
+        }
+        let name = "execution-\(UUID().uuidString.prefix(8)).jpg"
+        return (jpeg, name, "image/jpeg")
+    }
+}
+
+private extension UIImage {
+    /// 過大的照片先縮邊再 JPEG，降低逾時與超過單檔上限的風險。
+    func resizedForUpload(maxLongEdge: CGFloat) -> UIImage {
+        let w = size.width * scale
+        let h = size.height * scale
+        let long = max(w, h)
+        guard long > maxLongEdge else { return self }
+        let ratio = maxLongEdge / long
+        let nw = max(1, floor(w * ratio))
+        let nh = max(1, floor(h * ratio))
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: nw, height: nh), format: format)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: CGSize(width: nw, height: nh)))
+        }
+    }
+}
+
+private struct AddExecutionSheet: View {
+    let onCancel: () -> Void
+    let onSave: (String, [(data: Data, filename: String, mimeType: String)]) async -> Bool
+
+    @Environment(NetworkPathMonitor.self) private var network
+    @State private var reply = ""
+    @State private var photoSelection: [PhotosPickerItem] = []
+    @State private var isPreparing = false
+    @State private var localError: String?
+
+    private let maxPhotos = 3
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if !network.isConnected {
+                    Section {
+                        Label("離線將暫存至本機，連線後自動上傳", systemImage: "icloud.and.arrow.up")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Section("執行說明") {
+                    TextEditor(text: $reply)
+                        .frame(minHeight: 120)
+                }
+                Section {
+                    PhotosPicker(selection: $photoSelection, maxSelectionCount: maxPhotos, matching: .images) {
+                        Label(
+                            photoSelection.isEmpty ? "加入照片" : "已選 \(photoSelection.count) 張（最多 \(maxPhotos) 張）",
+                            systemImage: "photo.on.rectangle.angled"
+                        )
+                    }
+                    .disabled(isPreparing)
+                    Text("與後端設定相同：每筆執行紀錄最多 \(maxPhotos) 個附件。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("附件")
+                }
+                if let localError, !localError.isEmpty {
+                    Section {
+                        Text(localError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .dismissKeyboardOnScroll()
+            .keyboardDoneToolbar()
+            .navigationTitle("新增紀錄")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(network.isConnected ? "儲存" : "暫存") {
+                        localError = nil
+                        Task { await prepareAndSave() }
+                    }
+                    .disabled(
+                        isPreparing
+                            || (reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && photoSelection.isEmpty)
+                    )
+                }
+            }
+        }
+        .dismissKeyboardOnTapOutside()
+    }
+
+    private func prepareAndSave() async {
+        await MainActor.run { isPreparing = true }
+        do {
+            var attachments: [(data: Data, filename: String, mimeType: String)] = []
+            for item in photoSelection.prefix(maxPhotos) {
+                attachments.append(try await ExecutionPhotoPickerSupport.jpegPayload(from: item))
+            }
+            let text = await MainActor.run { reply }
+            _ = await onSave(text, attachments)
+        } catch {
+            await MainActor.run {
+                localError = error.localizedDescription
+            }
+        }
+        await MainActor.run { isPreparing = false }
+    }
+}

@@ -2,16 +2,21 @@
 //  noblehall_cms_appApp.swift
 //  noblehall-cms-app
 //
-//  Created by User on 2026/5/14.
-//
 
+import SwiftData
 import SwiftUI
 
 @main
 struct noblehall_cms_appApp: App {
+    @State private var sessionStore = SessionStore()
+    @State private var networkMonitor = NetworkPathMonitor()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            AppRootView()
+                .environment(sessionStore)
+                .environment(networkMonitor)
+                .modelContainer(AppModelContainer.shared)
         }
     }
 }
