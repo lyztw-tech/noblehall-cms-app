@@ -19,5 +19,6 @@ struct MainTabView: View {
                 .tabItem { Label("設定", systemImage: "gearshape.fill") }
         }
         .tint(NobleHallTheme.brandGold)
+        .toolbarBackground(.hidden, for: .tabBar)
     }
 }

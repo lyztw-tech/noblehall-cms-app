@@ -8,7 +8,8 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Bindable private var planPreload = PlanAssetPreloadStore.shared
 
-    @State private var cacheStats: PlanAssetCacheStats?
+    @State private var offlineUsedBytes: Int64 = 0
+    @State private var availableBytes: Int64?
     @State private var showClearProjectCacheConfirm = false
     @State private var cacheMaintenanceError: String?
 
@@ -37,14 +38,21 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                 }
             }
-            planCacheSection
+            offlineDataSection
                 Section {
                     Button("登出", role: .destructive) {
                         Task { await logout() }
                     }
                 }
             }
+            .listSectionSpacing(14)
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(NobleHallTheme.cardBackground)
+            )
+            .nobleHallScreen()
             .navigationTitle("設定")
+            .navigationBarTitleDisplayMode(.inline)
             .task(id: projectCode) { await refreshCacheStats() }
             .onChange(of: planPreload.lastCompletedAt) { _, _ in
                 Task { await refreshCacheStats() }
@@ -64,59 +72,46 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var planCacheSection: some View {
+    private var offlineDataSection: some View {
         Section {
             if planPreload.isRunning {
                 HStack(spacing: 12) {
                     ProgressView()
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("正在下載平面圖與座標點…")
+                        Text("正在刷新離線資料…")
                         if let progress = planPreload.progressText {
                             Text(progress)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(NobleHallTheme.secondaryInk)
                         }
                     }
                 }
             }
-            if let stats = cacheStats {
-                LabeledContent("平面圖", value: "\(stats.drawingCount) 張")
-                LabeledContent("圖檔已下載", value: "\(stats.drawingsWithImageCount) / \(stats.drawingCount) 張")
-                LabeledContent("座標點", value: "\(stats.totalPointCount) 個")
-                LabeledContent("暫存空間", value: PlanAssetCache.formattedByteCount(stats.totalBytes))
-                if stats.imageBytes > 0 {
-                    LabeledContent("　├ 圖檔", value: PlanAssetCache.formattedByteCount(stats.imageBytes))
-                }
-                if stats.metadataBytes > 0 {
-                    LabeledContent("　└ 座標資料", value: PlanAssetCache.formattedByteCount(stats.metadataBytes))
-                }
-            } else {
-                Text("尚無離線暫存")
-                    .foregroundStyle(.secondary)
-            }
-            if let completed = planPreload.lastCompletedAt {
-                LabeledContent("上次更新", value: Self.formatLastUpdated(completed))
-            }
-            if planPreload.lastImagesCachedCount > 0, let stats = cacheStats {
-                LabeledContent("上次預載圖檔", value: "\(planPreload.lastImagesCachedCount) / \(stats.drawingCount) 張")
-            }
-            if let pending = try? TaskCreateOutbox.pendingCount(context: modelContext), pending > 0 {
-                LabeledContent("待上傳任務", value: "\(pending) 筆")
-            }
-            if let pendingExec = try? ExecutionOutbox.pendingCount(context: modelContext), pendingExec > 0 {
-                LabeledContent("待上傳執行紀錄", value: "\(pendingExec) 筆")
-            }
+
+            LabeledContent("已使用空間", value: PlanAssetCache.formattedByteCount(offlineUsedBytes))
+            LabeledContent(
+                "可用空間",
+                value: availableBytes.map { PlanAssetCache.formattedByteCount($0) } ?? "—"
+            )
+            LabeledContent("上次更新", value: lastUpdatedLabel)
+
             if let err = planPreload.lastError, !err.isEmpty {
                 Text(err)
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
-            Button("清除此專案離線暫存…", role: .destructive) {
+
+            Button("刷新資料") {
+                Task { await redownloadPlanCache() }
+            }
+            .disabled(planPreload.isRunning || !network.isConnected)
+
+            Button("清除暫存資料", role: .destructive) {
                 showClearProjectCacheConfirm = true
             }
             .disabled(planPreload.isRunning)
             .confirmationDialog(
-                "將刪除此專案的任務列表快取、任務詳情、平面圖與新增任務表單資料；不影響帳號與待上傳佇列。",
+                "清除暫存資料",
                 isPresented: $showClearProjectCacheConfirm,
                 titleVisibility: .visible
             ) {
@@ -124,34 +119,31 @@ struct SettingsView: View {
                     Task { await clearProjectOfflineCaches() }
                 }
                 Button("取消", role: .cancel) {}
+            } message: {
+                Text("將刪除此專案的本機任務、平面圖與表單快取；不影響帳號，待上傳佇列仍會保留。")
             }
-            Button("重新下載暫存") {
-                Task { await redownloadPlanCache() }
-            }
-            .disabled(planPreload.isRunning || !network.isConnected)
         } header: {
-            Text("離線平面圖暫存")
+            Text("離線資料")
         } footer: {
-            Text("連線後會自動下載平面圖、座標點與新增任務表單資料；離線可暫存新任務與執行紀錄（含照片），連線後自動上傳。登出時會先嘗試上傳佇列（須連線），接著清除本機暫存與佇列，避免他人使用裝置時看到前一帳號資料；若離線登出，尚未上傳的暫存將一併移除。")
+            Text(
+                "本機會保留此專案的任務列表與詳情、品質平面圖與座標點、新增任務表單，以及離線暫存尚未上傳的任務與執行紀錄（含照片）。連線後可按「刷新資料」同步最新內容。"
+            )
         }
     }
 
-    private static let lastUpdatedFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_TW")
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter
-    }()
-
-    private static func formatLastUpdated(_ date: Date) -> String {
-        lastUpdatedFormatter.string(from: date)
+    private var lastUpdatedLabel: String {
+        guard let completed = planPreload.lastCompletedAt else { return "尚未刷新" }
+        return AppDateTimeFormat.fullDateTime(completed)
     }
 
     private func refreshCacheStats() async {
         await PlanAssetCache.repairCachedPNGs(projectCode: projectCode, context: modelContext)
         try? modelContext.save()
-        cacheStats = try? PlanAssetCache.stats(projectCode: projectCode, context: modelContext)
+        offlineUsedBytes = (try? CacheMaintenance.projectOfflineUsedBytes(
+            projectCode: projectCode,
+            context: modelContext
+        )) ?? 0
+        availableBytes = CacheMaintenance.deviceAvailableStorageBytes()
     }
 
     private func redownloadPlanCache() async {

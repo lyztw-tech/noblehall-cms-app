@@ -9,20 +9,27 @@ struct LoginView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    VStack(alignment: .leading, spacing: 18) {
-                        brandMark
-                        NobleHallSectionHeader(
-                            eyebrow: "Noble Hall CMS",
-                            title: "育堂建設品質工作台",
-                            subtitle: "築出品味，也守護每一項現場細節。請登入後選擇專案，開始管理任務與平面圖。",
-                            systemImage: "building.2.crop.circle"
-                        )
-                    }
-                    .padding(.top, 28)
+            GeometryReader { proxy in
+                ScrollView {
+                    loginContent
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
+                }
+            }
+            .nobleHallScreen()
+            .dismissKeyboardOnScroll()
+            .keyboardDoneToolbar()
+            .toolbar(.hidden, for: .navigationBar)
+        }
+        .dismissKeyboardOnTapOutside()
+    }
 
-                    VStack(alignment: .leading, spacing: 18) {
+    private var loginContent: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            brandMark
+
+            VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("帳號")
                                 .font(.subheadline.weight(.semibold))
@@ -67,7 +74,7 @@ struct LoginView: View {
                                         .tint(.white)
                                 } else {
                                     Image(systemName: "arrow.right.circle.fill")
-                                    Text("登入工作台")
+                                    Text("登入")
                                 }
                             }
                         }
@@ -92,39 +99,16 @@ struct LoginView: View {
                     }
                     .padding(16)
                     .nobleHallCard(cornerRadius: 18)
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 28)
-            }
-            .nobleHallScreen()
-            .dismissKeyboardOnScroll()
-            .keyboardDoneToolbar()
-            .navigationTitle("登入")
-            .navigationBarTitleDisplayMode(.inline)
         }
-        .dismissKeyboardOnTapOutside()
     }
 
     private var brandMark: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(NobleHallTheme.brandGold.opacity(0.12))
-                Image(systemName: "house.and.flag.fill")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(NobleHallTheme.brandGold)
-            }
-            .frame(width: 52, height: 52)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("育堂建設")
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(NobleHallTheme.ink)
-                Text("NOBLE HALL")
-                    .font(.caption.weight(.semibold))
-                    .tracking(2.4)
-                    .foregroundStyle(NobleHallTheme.brandGold)
-            }
-        }
+        Image("NobleHallLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(maxWidth: 168)
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("育堂建設 Noble Hall")
     }
 
     private func submit() {

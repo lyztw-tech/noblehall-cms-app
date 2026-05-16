@@ -17,57 +17,37 @@ struct TaskSearchView: View {
     }
 
     var body: some View {
-        Group {
-            if trimmedQuery.isEmpty {
-                ContentUnavailableView {
-                    Label("搜尋任務", systemImage: "magnifyingglass")
-                } description: {
-                    Text("輸入任務名稱、空間、圖面或執行人")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            } else if results.isEmpty {
-                ContentUnavailableView("找不到符合的任務", systemImage: "magnifyingglass")
-            } else {
-                List {
-                    ForEach(results) { task in
-                        Button {
-                            guard !task.id.hasPrefix("pending-") else { return }
-                            selectedRoute = TaskRoute(id: task.id, qualityDrawingId: task.qualityDrawing?.id)
-                        } label: {
-                            QualityTaskListRow(
-                                task: task,
-                                showsDrawingAndStatus: true,
-                                showsPendingUploadIcon: task.id.hasPrefix("pending-")
-                            )
+        NavigationStack {
+            NobleHallNativeSearchScreen(
+                query: $query,
+                prompt: "任務、空間、圖面、執行人",
+                emptyTitle: "搜尋任務",
+                emptyDescription: "輸入任務名稱、空間、平面圖或執行人",
+                onCancel: closeSearch
+            ) {
+                if results.isEmpty {
+                    ContentUnavailableView("找不到符合的任務", systemImage: "magnifyingglass")
+                } else {
+                    List {
+                        ForEach(results) { task in
+                            Button {
+                                guard !task.id.hasPrefix("pending-") else { return }
+                                selectedRoute = TaskRoute(id: task.id, qualityDrawingId: task.qualityDrawing?.id)
+                            } label: {
+                                QualityTaskListRow(
+                                    task: task,
+                                    showsDrawingAndStatus: true,
+                                    showsPendingUploadIcon: task.id.hasPrefix("pending-")
+                                )
+                            }
+                            .disabled(task.id.hasPrefix("pending-"))
                         }
-                        .disabled(task.id.hasPrefix("pending-"))
                     }
-                }
-                .listStyle(.plain)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .dismissKeyboardOnScroll()
-        .navigationTitle("搜尋")
-        .navigationBarTitleDisplayMode(.inline)
-        .searchable(
-            text: $query,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "任務、空間、圖面、執行人"
-        )
-        .navigationBarBackButtonHidden(true)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.body.weight(.semibold))
+                    .listStyle(.plain)
+                    .dismissKeyboardOnScroll()
                 }
             }
         }
-        .dismissKeyboardOnTapOutside()
         .fullScreenCover(item: $selectedRoute) { route in
             TaskDetailView(
                 projectCode: projectCode,
@@ -76,6 +56,11 @@ struct TaskSearchView: View {
                 onClose: { selectedRoute = nil }
             )
         }
+    }
+
+    private func closeSearch() {
+        query = ""
+        dismiss()
     }
 
     private struct TaskRoute: Identifiable, Hashable {

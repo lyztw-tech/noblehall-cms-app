@@ -51,7 +51,7 @@ struct TaskDetailView: View {
     @State private var executionSaveNotice: String?
     @State private var editingLedgerExecution: TaskLedgerEntryDto?
     @State private var executionEditDraftText = ""
-    @State private var executionEditPhotoSelection: [PhotosPickerItem] = []
+    @State private var executionEditPickedPhotos: [PickedUploadPhoto] = []
     @State private var executionEditError: String?
     @State private var isSavingExecutionEdit = false
     @State private var showDeleteExecutionConfirm = false
@@ -353,7 +353,7 @@ struct TaskDetailView: View {
 
     /// 頂部標題：優先詳情 API，否則列表快取之圖面名稱。
     private var resolvedQualityDrawingTitle: String? {
-        if let s = detail?.task.qualityDrawing?.name?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+        if let s = detail?.task.qualityDrawing?.name.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
             return s
         }
         if let s = cachedListRow?.drawingName?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
@@ -454,19 +454,14 @@ struct TaskDetailView: View {
                             .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
                         }
                         if network.isConnected, maxAdditionalExecutionPhotos(for: entry) > 0 {
-                            PhotosPicker(
-                                selection: $executionEditPhotoSelection,
-                                maxSelectionCount: maxAdditionalExecutionPhotos(for: entry),
-                                matching: .images
-                            ) {
-                                Label(
-                                    executionEditPhotoSelection.isEmpty
-                                        ? "加入照片"
-                                        : "已選 \(executionEditPhotoSelection.count) 張（最多再 \(maxAdditionalExecutionPhotos(for: entry)) 張）",
-                                    systemImage: "photo.on.rectangle.angled"
-                                )
-                            }
-                            .disabled(isSavingExecutionEdit)
+                            TaskAttachmentPhotoPickerSection(
+                                photos: $executionEditPickedPhotos,
+                                maxCount: maxAdditionalExecutionPhotos(for: entry),
+                                filenamePrefix: "execution",
+                                isDisabled: isSavingExecutionEdit,
+                                caption: "與新增紀錄相同：含既有附件每筆最多 \(maxExecutionAttachmentsPerEntry) 個。",
+                                onError: { executionEditError = $0 }
+                            )
                         } else if !network.isConnected {
                             Text("連線後才能上傳附件。")
                                 .font(.caption)
@@ -476,9 +471,6 @@ struct TaskDetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Text("與新增紀錄相同：含既有附件每筆最多 \(maxExecutionAttachmentsPerEntry) 個。")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
                     } header: {
                         Text("附件")
                     }
@@ -495,7 +487,7 @@ struct TaskDetailView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("取消") {
-                            executionEditPhotoSelection = []
+                            executionEditPickedPhotos = []
                             editingLedgerExecution = nil
                         }
                     }
@@ -508,7 +500,7 @@ struct TaskDetailView: View {
                 }
                 .onAppear {
                     executionEditDraftText = entry.body ?? ""
-                    executionEditPhotoSelection = []
+                    executionEditPickedPhotos = []
                     executionEditError = nil
                 }
             }
@@ -835,7 +827,7 @@ struct TaskDetailView: View {
     private func ledgerExecutionEditHasChanges(entry: TaskLedgerEntryDto) -> Bool {
         let original = (entry.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmed = executionEditDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed != original || !executionEditPhotoSelection.isEmpty
+        return trimmed != original || !executionEditPickedPhotos.isEmpty
     }
 
     private func saveLedgerExecutionEdit(entry: TaskLedgerEntryDto) async {
@@ -865,11 +857,10 @@ struct TaskDetailView: View {
                     spaceId: sid
                 )
             }
-            if !executionEditPhotoSelection.isEmpty {
-                var newFiles: [(data: Data, filename: String, mimeType: String)] = []
-                for item in executionEditPhotoSelection.prefix(maxNew) {
-                    newFiles.append(try await ExecutionPhotoPickerSupport.jpegPayload(from: item))
-                }
+            if !executionEditPickedPhotos.isEmpty {
+                let newFiles: [(data: Data, filename: String, mimeType: String)] = executionEditPickedPhotos
+                    .prefix(maxNew)
+                    .map { ($0.data, $0.filename, $0.mimeType) }
                 if !newFiles.isEmpty {
                     let uploadResp = try await QualityTaskAPI.uploadExecutionAttachments(
                         projectCode: projectCode,
@@ -882,7 +873,7 @@ struct TaskDetailView: View {
                     if uploadResp.success == false {
                         executionSaveNotice = uploadResp.message ?? "部分檔案上傳失敗"
                         editingLedgerExecution = nil
-                        executionEditPhotoSelection = []
+                        executionEditPickedPhotos = []
                         await loadAll()
                         refreshPendingExecutions()
                         return
@@ -890,7 +881,7 @@ struct TaskDetailView: View {
                 }
             }
             editingLedgerExecution = nil
-            executionEditPhotoSelection = []
+            executionEditPickedPhotos = []
             await loadAll()
             refreshPendingExecutions()
         } catch {
@@ -1658,83 +1649,25 @@ private struct FloorPlanCanvasView: View {
 
 // MARK: - Add execution（含照片；後端每筆最多 3 個附件）
 
-/// 由 `PhotosPickerItem.loadTransferable` 讀入點陣圖（勿用已移除的 `PhotosPickerItem.itemProvider`）。
-private struct PickedUIImageForUpload: Transferable {
-    let uiImage: UIImage
-
-    static var transferRepresentation: some TransferRepresentation {
-        DataRepresentation(importedContentType: UTType.image) { data in
-            guard let img = UIImage(data: data) else {
-                throw NSError(
-                    domain: "TaskDetail",
-                    code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: "無法解碼所選照片"]
-                )
-            }
-            return PickedUIImageForUpload(uiImage: img)
-        }
-    }
-}
-
-private enum ExecutionPhotoPickerSupport {
-    /// 轉成 JPEG 上傳（與後端 `allowedAttachmentMimeTypes` 之 `image/jpeg` 對齊）。
-    static func jpegPayload(from item: PhotosPickerItem) async throws -> (data: Data, filename: String, mimeType: String) {
-        let ui: UIImage
-        if let picked = try await item.loadTransferable(type: PickedUIImageForUpload.self) {
-            ui = picked.uiImage
-        } else if let data = try await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
-            ui = img
-        } else {
-            throw NSError(
-                domain: "TaskDetail",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "無法讀取所選照片"]
-            )
-        }
-        let toEncode = ui.resizedForUpload(maxLongEdge: 2400)
-        guard let jpeg = toEncode.jpegData(compressionQuality: 0.86) else {
-            throw NSError(
-                domain: "TaskDetail",
-                code: -2,
-                userInfo: [NSLocalizedDescriptionKey: "無法產生照片資料"]
-            )
-        }
-        let name = "execution-\(UUID().uuidString.prefix(8)).jpg"
-        return (jpeg, name, "image/jpeg")
-    }
-}
-
-private extension UIImage {
-    /// 過大的照片先縮邊再 JPEG，降低逾時與超過單檔上限的風險。
-    func resizedForUpload(maxLongEdge: CGFloat) -> UIImage {
-        let w = size.width * scale
-        let h = size.height * scale
-        let long = max(w, h)
-        guard long > maxLongEdge else { return self }
-        let ratio = maxLongEdge / long
-        let nw = max(1, floor(w * ratio))
-        let nh = max(1, floor(h * ratio))
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: nw, height: nh), format: format)
-        return renderer.image { _ in
-            draw(in: CGRect(origin: .zero, size: CGSize(width: nw, height: nh)))
-        }
-    }
-}
-
 private struct ExecutionAttachmentThumbnail: View {
     let attachment: ExecutionAttachmentDto
     let spaceId: String?
 
     @State private var image: UIImage?
+    @State private var showPreview = false
 
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
+                Button {
+                    showPreview = true
+                } label: {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("預覽附件")
             } else {
                 ZStack {
                     Color(.systemGray5)
@@ -1748,11 +1681,18 @@ private struct ExecutionAttachmentThumbnail: View {
         .task(id: attachment.id) {
             await loadImage()
         }
+        .fullScreenCover(isPresented: $showPreview) {
+            if let image {
+                PhotoPreviewScreen(image: image) {
+                    showPreview = false
+                }
+            }
+        }
     }
 
     private func loadImage() async {
         guard let sid = spaceId, !sid.isEmpty else { return }
-        let candidates = [attachment.thumbnailUrl, attachment.url].compactMap(URLResolver.absoluteAssetURL)
+        let candidates = [attachment.thumbnailUrl, attachment.url].compactMap { URLResolver.absoluteAssetURL($0) }
         for u in candidates {
             if let data = try? await APIClient.shared.fetchBinary(url: u, spaceId: sid),
                let img = UIImage(data: data) {
@@ -1769,7 +1709,7 @@ private struct AddExecutionSheet: View {
 
     @Environment(NetworkPathMonitor.self) private var network
     @State private var reply = ""
-    @State private var photoSelection: [PhotosPickerItem] = []
+    @State private var pickedPhotos: [PickedUploadPhoto] = []
     @State private var isPreparing = false
     @State private var localError: String?
 
@@ -1790,16 +1730,14 @@ private struct AddExecutionSheet: View {
                         .frame(minHeight: 120)
                 }
                 Section {
-                    PhotosPicker(selection: $photoSelection, maxSelectionCount: maxPhotos, matching: .images) {
-                        Label(
-                            photoSelection.isEmpty ? "加入照片" : "已選 \(photoSelection.count) 張（最多 \(maxPhotos) 張）",
-                            systemImage: "photo.on.rectangle.angled"
-                        )
-                    }
-                    .disabled(isPreparing)
-                    Text("與後端設定相同：每筆執行紀錄最多 \(maxPhotos) 個附件。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    TaskAttachmentPhotoPickerSection(
+                        photos: $pickedPhotos,
+                        maxCount: maxPhotos,
+                        filenamePrefix: "execution",
+                        isDisabled: isPreparing,
+                        caption: "與後端設定相同：每筆執行紀錄最多 \(maxPhotos) 個附件。",
+                        onError: { localError = $0 }
+                    )
                 } header: {
                     Text("附件")
                 }
@@ -1826,7 +1764,7 @@ private struct AddExecutionSheet: View {
                     }
                     .disabled(
                         isPreparing
-                            || (reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && photoSelection.isEmpty)
+                            || (reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && pickedPhotos.isEmpty)
                     )
                 }
             }
@@ -1836,18 +1774,9 @@ private struct AddExecutionSheet: View {
 
     private func prepareAndSave() async {
         await MainActor.run { isPreparing = true }
-        do {
-            var attachments: [(data: Data, filename: String, mimeType: String)] = []
-            for item in photoSelection.prefix(maxPhotos) {
-                attachments.append(try await ExecutionPhotoPickerSupport.jpegPayload(from: item))
-            }
-            let text = await MainActor.run { reply }
-            _ = await onSave(text, attachments)
-        } catch {
-            await MainActor.run {
-                localError = error.localizedDescription
-            }
-        }
+        let attachments = pickedPhotos.prefix(maxPhotos).map { ($0.data, $0.filename, $0.mimeType) }
+        let text = await MainActor.run { reply }
+        _ = await onSave(text, attachments)
         await MainActor.run { isPreparing = false }
     }
 }

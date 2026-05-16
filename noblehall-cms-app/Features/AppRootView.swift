@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 // MARK: - Noble Hall Brand Design System
 
@@ -95,26 +96,6 @@ struct NobleHallSectionHeader: View {
     }
 }
 
-struct NobleHallSearchPill: View {
-    let title: String
-    let systemImage: String
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: systemImage)
-                .foregroundStyle(NobleHallTheme.brandGold)
-            Text(title)
-                .foregroundStyle(NobleHallTheme.secondaryInk)
-            Spacer(minLength: 0)
-        }
-        .font(.subheadline.weight(.medium))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(NobleHallTheme.cardBackground, in: Capsule())
-        .overlay(Capsule().strokeBorder(NobleHallTheme.hairline.opacity(0.8), lineWidth: 1))
-    }
-}
-
 struct NobleHallStatusPill: View {
     let title: String
     var systemImage: String? = nil
@@ -133,9 +114,98 @@ struct NobleHallStatusPill: View {
     }
 }
 
+/// 列表用的小型離線提示（tag 樣式，不佔整列說明區塊）。
+struct NobleHallOfflineTag: View {
+    var text: String = "離線模式"
+    /// 前段狀態（例：離線中）；與 `detail` 同時設定時優先顯示。
+    var prefix: String?
+    var detail: String?
+    /// 單行長文案：字級略大。
+    var singleLine: Bool = false
+
+    private var usesSplitCopy: Bool {
+        guard let prefix, let detail else { return false }
+        return !prefix.isEmpty && !detail.isEmpty
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "wifi.slash")
+            if usesSplitCopy, let prefix, let detail {
+                Text(prefix)
+                    .fontWeight(.semibold)
+                Text(detail)
+                    .fontWeight(.medium)
+            } else {
+                Text(text)
+            }
+        }
+        .font(usesSplitCopy || singleLine ? .caption.weight(.medium) : .caption2.weight(.semibold))
+        .foregroundStyle(NobleHallTheme.warning)
+        .lineLimit(1)
+        .padding(.horizontal, usesSplitCopy || singleLine ? 12 : 8)
+        .padding(.vertical, usesSplitCopy || singleLine ? 6 : 4)
+        .background(NobleHallTheme.warning.opacity(0.12), in: Capsule())
+    }
+}
+
+/// 隱藏 NavigationBar 底部分隔線（透明導覽列時常會露出一條 hairline）。
+struct NobleHallNavigationBarSeparatorHidden: ViewModifier {
+    func body(content: Content) -> some View {
+        content.background(NobleHallNavigationBarSeparatorConfigurator())
+    }
+}
+
+private struct NobleHallNavigationBarSeparatorConfigurator: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController { UIViewController() }
+
+    func updateUIViewController(_ viewController: UIViewController, context: Context) {
+        DispatchQueue.main.async {
+            guard let navigationBar = viewController.navigationController?.navigationBar else { return }
+            let appearance = UINavigationBarAppearance()
+            appearance.configureWithTransparentBackground()
+            appearance.shadowColor = .clear
+            appearance.shadowImage = UIImage()
+            appearance.backgroundColor = .clear
+            navigationBar.standardAppearance = appearance
+            navigationBar.scrollEdgeAppearance = appearance
+            navigationBar.compactAppearance = appearance
+        }
+    }
+}
+
 extension View {
     func nobleHallScreen() -> some View { modifier(NobleHallScreenBackground()) }
     func nobleHallCard(cornerRadius: CGFloat = 22) -> some View { modifier(NobleHallCardStyle(cornerRadius: cornerRadius)) }
+    func nobleHallNavigationBarSeparatorHidden() -> some View { modifier(NobleHallNavigationBarSeparatorHidden()) }
+
+    /// 設定／篩選等分組列表：暖色底、圓角卡片列。
+    func nobleHallGroupedListStyle() -> some View {
+        listStyle(.insetGrouped)
+            .listSectionSpacing(14)
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(NobleHallTheme.cardBackground)
+            )
+            .nobleHallScreen()
+    }
+
+    /// Form 頁面（日期、文字輸入等）與列表視覺一致。
+    func nobleHallFormStyle() -> some View {
+        listSectionSpacing(14)
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(NobleHallTheme.cardBackground)
+            )
+            .nobleHallScreen()
+    }
+
+    /// 列表內嵌離線 tag 列：透明背景、緊湊間距。
+    func nobleHallOfflineListTagRow() -> some View {
+        listRowInsets(EdgeInsets(top: 2, leading: 20, bottom: 6, trailing: 20))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+    }
 }
 
 struct AppRootView: View {

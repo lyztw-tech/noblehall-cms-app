@@ -26,9 +26,17 @@ struct TaskManagementRootView: View {
         Group {
             switch listMode {
             case .floorPlan:
-                TaskManagementFloorPlanListView(projectCode: projectCode, filterStore: filterStore)
+                TaskManagementFloorPlanListView(
+                    projectCode: projectCode,
+                    filterStore: filterStore,
+                    showFilter: $showFilter
+                )
             case .allTasks:
-                TaskManagementAllTasksView(projectCode: projectCode, filterStore: filterStore)
+                TaskManagementAllTasksView(
+                    projectCode: projectCode,
+                    filterStore: filterStore,
+                    showFilter: $showFilter
+                )
             }
         }
         .navigationTitle("任務管理")
@@ -52,59 +60,11 @@ struct TaskManagementRootView: View {
                     .foregroundStyle(NobleHallTheme.brandGold)
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showFilter = true
-                } label: {
-                    ZStack(alignment: .topTrailing) {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                            .font(.body.weight(.medium))
-                        if filterStore.activeConditionCount > 0 {
-                            Text("\(min(filterStore.activeConditionCount, 9))")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(4)
-                                .background(Color.red, in: Circle())
-                                .offset(x: 6, y: -6)
-                        }
-                    }
-                }
-                .accessibilityLabel("篩選")
-            }
         }
         .navigationDestination(isPresented: $showFilter) {
             TaskManagementFilterRootView(projectCode: projectCode, store: filterStore)
         }
     }
-}
-
-
-private func taskManagementHeader(title: String, subtitle: String, systemImage: String) -> some View {
-    HStack(alignment: .top, spacing: 12) {
-        ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(NobleHallTheme.brandGold.opacity(0.12))
-            Image(systemName: systemImage)
-                .foregroundStyle(NobleHallTheme.brandGold)
-                .font(.title3.weight(.semibold))
-        }
-        .frame(width: 48, height: 48)
-        VStack(alignment: .leading, spacing: 4) {
-            Text("TASK MANAGEMENT")
-                .font(.caption.weight(.semibold))
-                .tracking(1.6)
-                .foregroundStyle(NobleHallTheme.brandGold)
-            Text(title)
-                .font(.headline.weight(.bold))
-                .foregroundStyle(NobleHallTheme.ink)
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(NobleHallTheme.secondaryInk)
-        }
-        Spacer(minLength: 0)
-    }
-    .padding(16)
-    .nobleHallCard(cornerRadius: 22)
 }
 
 // MARK: - Routes
@@ -127,6 +87,7 @@ struct TaskManagementStatusRoute: Hashable {
 struct TaskManagementAllTasksView: View {
     let projectCode: String
     var filterStore: TaskManagementFilterStore
+    @Binding var showFilter: Bool
 
     @Environment(SessionStore.self) private var session
     @Environment(NetworkPathMonitor.self) private var network
@@ -148,22 +109,6 @@ struct TaskManagementAllTasksView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            taskManagementHeader(title: "全部品質任務", subtitle: "跨平面圖查看所有品質事項", systemImage: "checklist")
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-
-            Button {
-                showSearch = true
-            } label: {
-                NobleHallSearchPill(title: "搜尋任務", systemImage: "magnifyingglass")
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 4)
-            .accessibilityLabel("搜尋任務")
-            .accessibilityHint("開啟搜尋頁面")
-
             Group {
                 if isLoading, tasks.isEmpty {
                     ProgressView("載入任務…")
@@ -173,7 +118,11 @@ struct TaskManagementAllTasksView: View {
                     List {
                         if !network.isConnected {
                             Section {
-                                Label("離線：僅顯示已快取任務", systemImage: "wifi.slash")
+                                HStack {
+                                    NobleHallOfflineTag(text: "僅快取")
+                                    Spacer(minLength: 0)
+                                }
+                                .nobleHallOfflineListTagRow()
                             }
                         }
                         ForEach(grouped, id: \.key) { section in
@@ -217,7 +166,13 @@ struct TaskManagementAllTasksView: View {
         .onChange(of: filterStore.revision) { _, _ in
             Task { await load() }
         }
-        .navigationDestination(isPresented: $showSearch) {
+        .taskManagementSearchFilterToolbar(
+            showSearch: $showSearch,
+            showFilter: $showFilter,
+            filterActiveCount: filterStore.activeConditionCount,
+            searchAccessibilityLabel: "搜尋任務"
+        )
+        .sheet(isPresented: $showSearch) {
             TaskSearchView(projectCode: projectCode, tasks: tasks)
         }
         .fullScreenCover(item: $selectedRoute) { route in
@@ -263,6 +218,7 @@ struct TaskManagementAllTasksView: View {
 struct TaskManagementFloorPlanListView: View {
     let projectCode: String
     var filterStore: TaskManagementFilterStore
+    @Binding var showFilter: Bool
 
     @Environment(SessionStore.self) private var session
     @Environment(NetworkPathMonitor.self) private var network
@@ -279,22 +235,6 @@ struct TaskManagementFloorPlanListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            taskManagementHeader(title: "平面圖任務管理", subtitle: "先選擇樓層，再依狀態快速檢查", systemImage: "map.fill")
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-
-            Button {
-                showSearch = true
-            } label: {
-                NobleHallSearchPill(title: "搜尋平面圖", systemImage: "magnifyingglass")
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 4)
-            .accessibilityLabel("搜尋平面圖")
-            .accessibilityHint("開啟搜尋頁面")
-
             Group {
                 if isLoading, drawings.isEmpty {
                     ProgressView("載入平面圖…")
@@ -320,6 +260,12 @@ struct TaskManagementFloorPlanListView: View {
         }
         .refreshable { await load() }
         .task { await load() }
+        .taskManagementSearchFilterToolbar(
+            showSearch: $showSearch,
+            showFilter: $showFilter,
+            filterActiveCount: filterStore.activeConditionCount,
+            searchAccessibilityLabel: "搜尋平面圖"
+        )
         // 平面圖搜尋須放在**獨立** `NavigationStack`（例如 sheet）內並自行註冊
         // `navigationDestination(for: TaskManagementDrawingRoute)`：
         // 若僅以 `navigationDestination(isPresented:)` 疊在列表同一層 stack 上，搜尋頁裡的
@@ -386,21 +332,15 @@ struct DrawingSearchView: View {
         QualityDrawingSearch.filter(drawings, query: query)
     }
 
-    private var trimmedQuery: String {
-        query.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     var body: some View {
-        Group {
-            if trimmedQuery.isEmpty {
-                ContentUnavailableView {
-                    Label("搜尋平面圖", systemImage: "magnifyingglass")
-                } description: {
-                    Text("輸入樓層或圖面名稱")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            } else if results.isEmpty {
+        NobleHallNativeSearchScreen(
+            query: $query,
+            prompt: "樓層、圖面名稱",
+            emptyTitle: "搜尋平面圖",
+            emptyDescription: "輸入樓層或圖面名稱",
+            onCancel: closeSearch
+        ) {
+            if results.isEmpty {
                 ContentUnavailableView("找不到符合的平面圖", systemImage: "magnifyingglass")
             } else {
                 List {
@@ -411,32 +351,17 @@ struct DrawingSearchView: View {
                     }
                 }
                 .listStyle(.plain)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .dismissKeyboardOnScroll()
-        .navigationTitle("搜尋")
-        .navigationBarTitleDisplayMode(.inline)
-        .searchable(
-            text: $query,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "樓層、圖面名稱"
-        )
-        .navigationBarBackButtonHidden(true)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.body.weight(.semibold))
-                }
+                .dismissKeyboardOnScroll()
             }
         }
         // 平面圖詳情之 `navigationDestination(for: TaskManagementDrawingRoute)` 由**外層**
         // `TaskManagementFloorPlanListView`（列表直進）或 **sheet 內** `NavigationStack`（搜尋進入）
         // 註冊；勿在此再掛同一型別，否則同一 stack 會重複註冊而觸發 Runtime 警告。
-        .dismissKeyboardOnTapOutside()
+    }
+
+    private func closeSearch() {
+        query = ""
+        dismiss()
     }
 
     private func drawingRoute(for item: QualityDrawingListItemDto) -> TaskManagementDrawingRoute {

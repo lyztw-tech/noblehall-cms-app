@@ -1,6 +1,13 @@
 import SwiftData
 import SwiftUI
 
+private struct MyTasksHeaderChromeHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private enum TaskListScope: String, CaseIterable, Identifiable {
     case all = "全部"
     case mineOnly = "指派給我"
@@ -27,6 +34,9 @@ struct MyTasksView: View {
     @State private var showDrawingPicker = false
     @State private var addTaskDrawing: QualityDrawingListItemDto?
     @State private var showSearch = false
+    @State private var headerChromeHeight: CGFloat = 52
+
+    private static let offlineStatusDetail = "可瀏覽快取，連線後自動上傳"
 
     init(projectCode: String) {
         self.projectCode = projectCode
@@ -93,11 +103,6 @@ struct MyTasksView: View {
                         .textSelection(.enabled)
                 }
             }
-            if !network.isConnected {
-                Section {
-                    Label("離線：顯示已快取之任務與尚未上傳的新增", systemImage: "wifi.slash")
-                }
-            }
             ForEach(sections, id: \.key) { section in
                 Section {
                     ForEach(section.tasks) { t in
@@ -107,6 +112,7 @@ struct MyTasksView: View {
                         } label: {
                             QualityTaskListRow(
                                 task: t,
+                                showsDrawingAndStatus: false,
                                 showsPendingUploadIcon: t.id.hasPrefix("pending-")
                             )
                         }
@@ -117,52 +123,43 @@ struct MyTasksView: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .scrollClipDisabled()
+        .contentMargins(.top, headerChromeHeight, for: .scrollContent)
+        .contentMargins(.bottom, 8, for: .scrollContent)
         .dismissKeyboardOnScroll()
         .refreshable { await load(force: true) }
     }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                taskHero
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                    .padding(.bottom, 8)
-
-                Button {
-                    showSearch = true
-                } label: {
-                    NobleHallSearchPill(title: "搜尋任務、空間或執行人", systemImage: "magnifyingglass")
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 4)
-                .accessibilityLabel("搜尋任務")
-                .accessibilityHint("開啟搜尋頁面")
-
-                Picker("", selection: $statusTab) {
-                    ForEach(QualityTaskStatusTab.allCases) { tab in
-                        Text("\(tab.rawValue)（\(countForStatusTab(tab))）").tag(tab)
+            ZStack(alignment: .top) {
+                ScrollView(.horizontal) {
+                    LazyHStack(spacing: 0) {
+                        ForEach(QualityTaskStatusTab.allCases) { tab in
+                            statusTabPage(for: tab)
+                                .containerRelativeFrame(.horizontal)
+                                .id(tab)
+                        }
                     }
+                    .scrollTargetLayout()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-
-                TabView(selection: $statusTab) {
-                    ForEach(QualityTaskStatusTab.allCases) { tab in
-                        statusTabPage(for: tab)
-                            .tag(tab)
-                    }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
+                .scrollTargetBehavior(.paging)
+                .scrollIndicators(.hidden)
+                .scrollPosition(id: statusTabScrollBinding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(NobleHallTheme.warmBackground)
+
+                myTasksHeaderChrome
             }
             .nobleHallScreen()
+            .onPreferenceChange(MyTasksHeaderChromeHeightKey.self) { height in
+                if height > 0 { headerChromeHeight = height }
+            }
             .navigationTitle("我的任務")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(NobleHallTheme.warmBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
@@ -182,7 +179,7 @@ struct MyTasksView: View {
                         .font(.subheadline.weight(.medium))
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
                         showFilter = true
                     } label: {
@@ -200,6 +197,13 @@ struct MyTasksView: View {
                         }
                     }
                     .accessibilityLabel("篩選")
+
+                    Button {
+                        showSearch = true
+                    } label: {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .accessibilityLabel("搜尋任務")
                 }
             }
             .navigationDestination(isPresented: $showFilter) {
@@ -217,8 +221,12 @@ struct MyTasksView: View {
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                     }
+                    .padding(.top, headerChromeHeight)
                 }
-                if isLoading, tasks.isEmpty, pendingAsListItems.isEmpty { ProgressView() }
+                if isLoading, tasks.isEmpty, pendingAsListItems.isEmpty {
+                    ProgressView()
+                        .padding(.top, headerChromeHeight)
+                }
             }
             .task { await load(force: false) }
             .onChange(of: filterStore.revision) { _, _ in
@@ -231,7 +239,7 @@ struct MyTasksView: View {
                     await load(force: true)
                 }
             }
-            .navigationDestination(isPresented: $showSearch) {
+            .sheet(isPresented: $showSearch) {
                 TaskSearchView(projectCode: projectCode, tasks: mergedTasks)
             }
             .fullScreenCover(item: $selectedRoute) { route in
@@ -284,53 +292,45 @@ struct MyTasksView: View {
     }
 
 
-    private var taskHero: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("NOBLE HALL")
-                        .font(.caption.weight(.semibold))
-                        .tracking(2)
-                        .foregroundStyle(NobleHallTheme.brandGold)
-                    Text("今日品質任務")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(NobleHallTheme.ink)
-                    Text("專案 \(projectCode) · \(listScope.rawValue)")
-                        .font(.subheadline)
-                        .foregroundStyle(NobleHallTheme.secondaryInk)
-                }
-                Spacer(minLength: 0)
-                NobleHallStatusPill(
-                    title: network.isConnected ? "線上" : "離線",
-                    systemImage: network.isConnected ? "wifi" : "wifi.slash",
-                    tint: network.isConnected ? NobleHallTheme.success : NobleHallTheme.warning
-                )
-            }
-
-            HStack(spacing: 10) {
-                summaryMetric(title: statusTab.rawValue, value: "\(filteredTasks.count)")
-                summaryMetric(title: "待上傳", value: "\(pendingAsListItems.count)")
-                summaryMetric(title: "篩選", value: "\(filterStore.activeConditionCount)")
-            }
-        }
-        .padding(18)
-        .nobleHallCard(cornerRadius: 24)
+    /// `scrollPosition(id:)` 需要 `Binding<Hashable?>`，與非 optional 的 `statusTab` 橋接。
+    private var statusTabScrollBinding: Binding<QualityTaskStatusTab?> {
+        Binding(
+            get: { statusTab },
+            set: { if let value = $0 { statusTab = value } }
+        )
     }
 
-    private func summaryMetric(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(value)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(NobleHallTheme.ink)
-            Text(title)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(NobleHallTheme.secondaryInk)
-                .lineLimit(1)
+    /// 浮於列表上方；暖色底擋住捲動內容。離線時於分頁上方顯示提示。
+    private var myTasksHeaderChrome: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !network.isConnected {
+                NobleHallOfflineTag(
+                    prefix: "離線中",
+                    detail: Self.offlineStatusDetail
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Picker("", selection: $statusTab) {
+                ForEach(QualityTaskStatusTab.allCases) { tab in
+                    Text("\(tab.rawValue)（\(countForStatusTab(tab))）").tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(NobleHallTheme.brandGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .background {
+            NobleHallTheme.warmBackground
+                .ignoresSafeArea(edges: .top)
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: MyTasksHeaderChromeHeightKey.self, value: proxy.size.height)
+            }
+        }
     }
 
     private struct TaskRoute: Identifiable, Hashable {
