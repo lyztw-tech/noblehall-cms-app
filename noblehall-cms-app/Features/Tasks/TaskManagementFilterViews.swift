@@ -1,5 +1,25 @@
 import SwiftUI
 
+// MARK: - 篩選 UI 共用
+
+private enum TaskManagementFilterUI {
+    static var checkmark: some View {
+        Image(systemName: "checkmark")
+            .font(.body.weight(.semibold))
+            .foregroundStyle(NobleHallTheme.brandGold)
+    }
+
+    @ViewBuilder
+    static func selectionRow(title: String, isSelected: Bool) -> some View {
+        HStack {
+            Text(title)
+                .foregroundStyle(NobleHallTheme.ink)
+            Spacer()
+            if isSelected { checkmark }
+        }
+    }
+}
+
 // MARK: - 篩選入口（第一層：條件列表 → 第二層：選項／輸入）
 
 struct TaskManagementFilterRootView: View {
@@ -20,7 +40,10 @@ struct TaskManagementFilterRootView: View {
         List {
             if let loadError {
                 Section {
-                    Text(loadError).font(.footnote).foregroundStyle(.red)
+                    Text(loadError)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
                 }
             }
             Section {
@@ -30,6 +53,7 @@ struct TaskManagementFilterRootView: View {
                     } label: {
                         HStack {
                             Text(field.title)
+                                .foregroundStyle(NobleHallTheme.ink)
                             Spacer()
                             Text(
                                 store.displaySummary(
@@ -41,14 +65,15 @@ struct TaskManagementFilterRootView: View {
                                     rooms: roomOptions
                                 )
                             )
-                            .foregroundStyle(.secondary)
+                            .font(.subheadline)
+                            .foregroundStyle(NobleHallTheme.secondaryInk)
                             .lineLimit(1)
                         }
                     }
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .nobleHallGroupedListStyle()
         .toolbar(.hidden, for: .tabBar)
         .navigationTitle("篩選條件")
         .navigationBarTitleDisplayMode(.inline)
@@ -59,6 +84,7 @@ struct TaskManagementFilterRootView: View {
                     groupOptions = []
                     roomOptions = []
                 }
+                .foregroundStyle(NobleHallTheme.secondaryInk)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("套用") {
@@ -66,6 +92,7 @@ struct TaskManagementFilterRootView: View {
                     dismiss()
                 }
                 .fontWeight(.semibold)
+                .foregroundStyle(NobleHallTheme.brandGold)
             }
         }
         .task(id: store.qualityDrawingId) {
@@ -238,31 +265,23 @@ private struct TaskManagementFilterDrawingPickerView: View {
                 selection = nil
                 onChange()
             } label: {
-                HStack {
-                    Text("全部平面圖")
-                    Spacer()
-                    if selection == nil {
-                        Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
-                    }
-                }
+                TaskManagementFilterUI.selectionRow(title: "全部平面圖", isSelected: selection == nil)
             }
-            .foregroundStyle(.primary)
+            .buttonStyle(.plain)
             ForEach(drawings) { item in
                 Button {
                     selection = item.id
                     onChange()
                 } label: {
-                    HStack {
-                        Text(item.drawing.name)
-                        Spacer()
-                        if selection == item.id {
-                            Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
-                        }
-                    }
+                    TaskManagementFilterUI.selectionRow(
+                        title: item.drawing.name,
+                        isSelected: selection == item.id
+                    )
                 }
-                .foregroundStyle(.primary)
+                .buttonStyle(.plain)
             }
         }
+        .nobleHallGroupedListStyle()
         .navigationTitle("平面圖")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -279,36 +298,35 @@ private struct TaskManagementFilterMultiSelectView: View {
     var body: some View {
         Group {
             if options.isEmpty {
-                ContentUnavailableView("無法選擇", systemImage: "line.3.horizontal.decrease.circle", description: Text(emptyHint))
+                ContentUnavailableView(
+                    "無法選擇",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    description: Text(emptyHint)
+                        .font(.subheadline)
+                        .foregroundStyle(NobleHallTheme.secondaryInk)
+                )
+                .nobleHallScreen()
             } else {
                 List {
                     Button {
                         selection = []
                     } label: {
-                        HStack {
-                            Text("全部")
-                            Spacer()
-                            if selection.isEmpty {
-                                Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
-                            }
-                        }
+                        TaskManagementFilterUI.selectionRow(title: "全部", isSelected: selection.isEmpty)
                     }
-                    .foregroundStyle(.primary)
+                    .buttonStyle(.plain)
                     ForEach(options) { opt in
                         Button {
                             toggle(opt.id)
                         } label: {
-                            HStack {
-                                Text(opt.label)
-                                Spacer()
-                                if selection.contains(opt.id) {
-                                    Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
-                                }
-                            }
+                            TaskManagementFilterUI.selectionRow(
+                                title: opt.label,
+                                isSelected: selection.contains(opt.id)
+                            )
                         }
-                        .foregroundStyle(.primary)
+                        .buttonStyle(.plain)
                     }
                 }
+                .nobleHallGroupedListStyle()
             }
         }
         .navigationTitle(title)
@@ -335,8 +353,10 @@ private struct TaskManagementFilterTextInputView: View {
             Section {
                 TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(2 ... 4)
+                    .foregroundStyle(NobleHallTheme.ink)
             }
         }
+        .nobleHallFormStyle()
         .dismissKeyboardOnScroll()
         .keyboardDoneToolbar()
         .navigationTitle("描述")
@@ -358,11 +378,13 @@ private struct TaskManagementFilterDateRangeView: View {
                     get: { from != nil },
                     set: { on in from = on ? (from ?? Date()) : nil }
                 ))
+                .tint(NobleHallTheme.brandGold)
                 if from != nil {
                     DatePicker("起日", selection: Binding(
                         get: { from ?? Date() },
                         set: { from = $0 }
                     ), displayedComponents: [.date])
+                    .tint(NobleHallTheme.brandGold)
                 }
             }
             Section("迄日") {
@@ -370,14 +392,17 @@ private struct TaskManagementFilterDateRangeView: View {
                     get: { to != nil },
                     set: { on in to = on ? (to ?? Date()) : nil }
                 ))
+                .tint(NobleHallTheme.brandGold)
                 if to != nil {
                     DatePicker("迄日", selection: Binding(
                         get: { to ?? Date() },
                         set: { to = $0 }
                     ), displayedComponents: [.date])
+                    .tint(NobleHallTheme.brandGold)
                 }
             }
         }
+        .nobleHallFormStyle()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -402,31 +427,23 @@ private struct TaskManagementFilterMemberSelectView: View {
             Button {
                 selection = []
             } label: {
-                HStack {
-                    Text("全部")
-                    Spacer()
-                    if selection.isEmpty {
-                        Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
-                    }
-                }
+                TaskManagementFilterUI.selectionRow(title: "全部", isSelected: selection.isEmpty)
             }
-            .foregroundStyle(.primary)
+            .buttonStyle(.plain)
             ForEach(sortedMembers, id: \.user.id) { m in
                 let uid = m.user.id
                 Button {
                     toggle(uid)
                 } label: {
-                    HStack {
-                        Text(m.user.displayName ?? m.user.username ?? uid)
-                        Spacer()
-                        if selection.contains(uid) {
-                            Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
-                        }
-                    }
+                    TaskManagementFilterUI.selectionRow(
+                        title: m.user.displayName ?? m.user.username ?? uid,
+                        isSelected: selection.contains(uid)
+                    )
                 }
-                .foregroundStyle(.primary)
+                .buttonStyle(.plain)
             }
         }
+        .nobleHallGroupedListStyle()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
     }

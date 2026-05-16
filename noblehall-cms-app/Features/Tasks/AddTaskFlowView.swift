@@ -337,8 +337,7 @@ private struct CreateTaskFormSheet: View {
     @State private var categories: [DropdownOptionItemDto] = []
     @State private var projectId: String?
 
-    @State private var photoItems: [PhotosPickerItem] = []
-    @State private var pickedPhotos: [PickedPhoto] = []
+    @State private var pickedPhotos: [PickedUploadPhoto] = []
 
     @State private var loadError: String?
     @State private var submitError: String?
@@ -351,12 +350,6 @@ private struct CreateTaskFormSheet: View {
         case user = "個人"
         case group = "群組"
         var id: String { rawValue }
-    }
-
-    private struct PickedPhoto: Identifiable {
-        let id = UUID()
-        let data: Data
-        let filename: String
     }
 
     private var isHouseholdPoint: Bool {
@@ -458,31 +451,12 @@ private struct CreateTaskFormSheet: View {
                     }
                 }
                 Section("照片（最多 \(addTaskMaxPhotoCount) 張）") {
-                    PhotosPicker(
-                        selection: $photoItems,
-                        maxSelectionCount: addTaskMaxPhotoCount,
-                        matching: .images
-                    ) {
-                        Label("選擇照片", systemImage: "photo.on.rectangle.angled")
-                    }
-                    .onChange(of: photoItems) { _, items in
-                        Task { await loadPhotos(from: items) }
-                    }
-                    if !pickedPhotos.isEmpty {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 8) {
-                                ForEach(pickedPhotos) { p in
-                                    if let img = UIImage(data: p.data) {
-                                        Image(uiImage: img)
-                                            .resizable()
-                                            .scaledToFill()
-                                            .frame(width: 72, height: 72)
-                                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    TaskAttachmentPhotoPickerSection(
+                        photos: $pickedPhotos,
+                        maxCount: addTaskMaxPhotoCount,
+                        filenamePrefix: "task",
+                        onError: { submitError = $0 }
+                    )
                 }
                 if let submitSuccess {
                     Section {
@@ -575,19 +549,6 @@ private struct CreateTaskFormSheet: View {
         if members.contains(where: { $0.user.id == uid }) {
             reviewerId = uid
         }
-    }
-
-    private func loadPhotos(from items: [PhotosPickerItem]) async {
-        var next: [PickedPhoto] = []
-        for item in items.prefix(addTaskMaxPhotoCount) {
-            do {
-                let payload = try await AddTaskPhotoSupport.jpegPayload(from: item)
-                next.append(PickedPhoto(data: payload.data, filename: payload.filename))
-            } catch {
-                submitError = error.localizedDescription
-            }
-        }
-        await MainActor.run { pickedPhotos = next }
     }
 
     private func submit() async {
@@ -1128,50 +1089,4 @@ private func addTaskOffsetKeeping(bounds: CGSize, content: CGPoint, focal: CGPoi
         width: focal.x - cx - (content.x - cx) * newScale,
         height: focal.y - cy - (content.y - cy) * newScale
     )
-}
-
-private enum AddTaskPhotoSupport {
-    static func jpegPayload(from item: PhotosPickerItem) async throws -> (data: Data, filename: String) {
-        struct Picked: Transferable {
-            let uiImage: UIImage
-            static var transferRepresentation: some TransferRepresentation {
-                DataRepresentation(importedContentType: UTType.image) { data in
-                    guard let img = UIImage(data: data) else {
-                        throw NSError(domain: "AddTask", code: -1, userInfo: [NSLocalizedDescriptionKey: "無法解碼照片"])
-                    }
-                    return Picked(uiImage: img)
-                }
-            }
-        }
-        let ui: UIImage
-        if let p = try await item.loadTransferable(type: Picked.self) {
-            ui = p.uiImage
-        } else if let data = try await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
-            ui = img
-        } else {
-            throw NSError(domain: "AddTask", code: -1, userInfo: [NSLocalizedDescriptionKey: "無法讀取照片"])
-        }
-        let resized = ui.addTaskResized(maxLongEdge: 2400)
-        guard let jpeg = resized.jpegData(compressionQuality: 0.86) else {
-            throw NSError(domain: "AddTask", code: -2, userInfo: [NSLocalizedDescriptionKey: "無法產生 JPEG"])
-        }
-        return (jpeg, "task-\(UUID().uuidString.prefix(8)).jpg")
-    }
-}
-
-private extension UIImage {
-    func addTaskResized(maxLongEdge: CGFloat) -> UIImage {
-        let w = size.width * scale
-        let h = size.height * scale
-        let long = max(w, h)
-        guard long > maxLongEdge else { return self }
-        let ratio = maxLongEdge / long
-        let nw = max(1, floor(w * ratio))
-        let nh = max(1, floor(h * ratio))
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        return UIGraphicsImageRenderer(size: CGSize(width: nw, height: nh), format: format).image { _ in
-            draw(in: CGRect(origin: .zero, size: CGSize(width: nw, height: nh)))
-        }
-    }
 }
