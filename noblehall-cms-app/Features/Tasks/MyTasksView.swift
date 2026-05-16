@@ -56,19 +56,69 @@ struct MyTasksView: View {
         pendingAsListItems + tasks
     }
 
-    private var filteredTasks: [QualityTaskListItemDto] {
-        mergedTasks.filter { statusTab.matches(status: $0.status) }
+    private func tasksMatching(_ tab: QualityTaskStatusTab) -> [QualityTaskListItemDto] {
+        mergedTasks.filter { tab.matches(status: $0.status) }
     }
 
-    private var grouped: [(key: String, title: String, tasks: [QualityTaskListItemDto])] {
-        let dict = Dictionary(grouping: filteredTasks) { item in
+    /// 目前選取之狀態分頁的任務（供空狀態 overlay 等使用）。
+    private var currentTabTasks: [QualityTaskListItemDto] {
+        tasksMatching(statusTab)
+    }
+
+    private func countForStatusTab(_ tab: QualityTaskStatusTab) -> Int {
+        mergedTasks.filter { tab.matches(status: $0.status) }.count
+    }
+
+    private func groupedSections(for tab: QualityTaskStatusTab) -> [(key: String, title: String, tasks: [QualityTaskListItemDto])] {
+        let rows = tasksMatching(tab)
+        let dict = Dictionary(grouping: rows) { item in
             item.qualityDrawing?.id ?? "_"
         }
         return dict.keys.sorted().map { k in
-            let rows = dict[k] ?? []
-            let title = rows.first?.qualityDrawing?.name ?? (k == "_" ? "未指定樓層圖面" : "樓層")
-            return (key: k, title: title, tasks: rows.sorted { ($0.name ?? "") < ($1.name ?? "") })
+            let sectionRows = dict[k] ?? []
+            let title = sectionRows.first?.qualityDrawing?.name ?? (k == "_" ? "未指定樓層圖面" : "樓層")
+            return (key: k, title: title, tasks: sectionRows.sorted { ($0.name ?? "") < ($1.name ?? "") })
         }
+    }
+
+    @ViewBuilder
+    private func statusTabPage(for tab: QualityTaskStatusTab) -> some View {
+        let sections = groupedSections(for: tab)
+        List {
+            if let loadError {
+                Section {
+                    Text(loadError)
+                        .foregroundStyle(.red)
+                        .font(.footnote)
+                        .textSelection(.enabled)
+                }
+            }
+            if !network.isConnected {
+                Section {
+                    Label("離線：顯示已快取之任務與尚未上傳的新增", systemImage: "wifi.slash")
+                }
+            }
+            ForEach(sections, id: \.key) { section in
+                Section {
+                    ForEach(section.tasks) { t in
+                        Button {
+                            guard !t.id.hasPrefix("pending-") else { return }
+                            selectedRoute = TaskRoute(id: t.id, qualityDrawingId: t.qualityDrawing?.id)
+                        } label: {
+                            QualityTaskListRow(
+                                task: t,
+                                showsPendingUploadIcon: t.id.hasPrefix("pending-")
+                            )
+                        }
+                        .disabled(t.id.hasPrefix("pending-"))
+                    }
+                } header: {
+                    Text("\(section.title)（\(section.tasks.count)）")
+                }
+            }
+        }
+        .dismissKeyboardOnScroll()
+        .refreshable { await load(force: true) }
     }
 
     var body: some View {
@@ -97,7 +147,7 @@ struct MyTasksView: View {
 
                 Picker("", selection: $statusTab) {
                     ForEach(QualityTaskStatusTab.allCases) { tab in
-                        Text(tab.rawValue).tag(tab)
+                        Text("\(tab.rawValue)（\(countForStatusTab(tab))）").tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -105,40 +155,14 @@ struct MyTasksView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
 
-                List {
-                if let loadError {
-                    Section {
-                        Text(loadError)
-                            .foregroundStyle(.red)
-                            .font(.footnote)
-                            .textSelection(.enabled)
+                TabView(selection: $statusTab) {
+                    ForEach(QualityTaskStatusTab.allCases) { tab in
+                        statusTabPage(for: tab)
+                            .tag(tab)
                     }
                 }
-                if !network.isConnected {
-                    Section {
-                        Label("離線：顯示已快取之任務與尚未上傳的新增", systemImage: "wifi.slash")
-                    }
-                }
-                ForEach(grouped, id: \.key) { section in
-                    Section {
-                        ForEach(section.tasks) { t in
-                            Button {
-                                guard !t.id.hasPrefix("pending-") else { return }
-                                selectedRoute = TaskRoute(id: t.id, qualityDrawingId: t.qualityDrawing?.id)
-                            } label: {
-                                QualityTaskListRow(
-                                    task: t,
-                                    showsPendingUploadIcon: t.id.hasPrefix("pending-")
-                                )
-                            }
-                            .disabled(t.id.hasPrefix("pending-"))
-                        }
-                    } header: {
-                        Text("\(section.title)（\(section.tasks.count)）")
-                    }
-                }
-                }
-                .dismissKeyboardOnScroll()
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .navigationTitle("我的任務")
             .navigationBarTitleDisplayMode(.inline)
@@ -185,7 +209,7 @@ struct MyTasksView: View {
                 TaskManagementFilterRootView(projectCode: projectCode, store: filterStore)
             }
             .overlay {
-                if !isLoading, filteredTasks.isEmpty, loadError == nil {
+                if !isLoading, currentTabTasks.isEmpty, loadError == nil {
                     ContentUnavailableView {
                         Label("\(statusTab.rawValue)沒有任務", systemImage: "checklist")
                     } description: {
@@ -199,7 +223,6 @@ struct MyTasksView: View {
                 }
                 if isLoading, tasks.isEmpty, pendingAsListItems.isEmpty { ProgressView() }
             }
-            .refreshable { await load(force: true) }
             .task { await load(force: false) }
             .onChange(of: filterStore.revision) { _, _ in
                 Task { await load(force: true) }
@@ -339,7 +362,8 @@ struct MyTasksView: View {
             status: row.status,
             group: nil,
             room: nil,
-            executor: nil
+            executor: nil,
+            createdAt: row.createdAt
         )
     }
 }

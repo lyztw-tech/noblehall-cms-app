@@ -11,6 +11,8 @@ struct QualityTaskListItemDto: Codable, Sendable, Identifiable {
     let group: NamedRefDto?
     let room: NamedRefDto?
     let executor: ExecutorRefDto?
+    /// 列表 API 與 `QualityTaskDto` 相同之 `createdAt`；離線暫存列可能為入佇時間。
+    let createdAt: Date?
 }
 
 struct QualityDrawingRefDto: Codable, Sendable {
@@ -138,13 +140,33 @@ enum TaskLedgerPresentation {
         guard entry.kind == .execution else { return false }
         guard entry.submissionId == nil else { return false }
         guard let uid = currentUserId, !uid.isEmpty, uid == entry.actor.id else { return false }
-        let st = (task.status ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
+        let st = QualityTaskEditEligibility.normalizedStatus(task.status)
         guard st == "in_progress" else { return false }
-        guard let threeDaysAgo = Calendar.current.date(byAdding: .day, value: -3, to: Date()) else { return false }
-        return entry.occurredAt >= threeDaysAgo
+        return QualityTaskEditEligibility.isCreatedWithinLastCalendarDays(entry.occurredAt, days: 3)
+    }
+
+    /// `nil` 表示可編輯（仍須連線，由 UI 另判斷）；否則為不可編輯原因。
+    static func draftExecutionEditBlockedReason(
+        entry: TaskLedgerEntryDto,
+        task: QualityTaskDto,
+        currentUserId: String?,
+        isOnline: Bool
+    ) -> String? {
+        if isOnline, canModifyDraftExecution(entry: entry, task: task, currentUserId: currentUserId) { return nil }
+        if !isOnline { return "離線時無法編輯執行說明。" }
+        if entry.kind != .execution { return "僅「執行」紀錄可編輯說明。" }
+        if entry.submissionId != nil { return "已送出後無法再編輯此筆說明。" }
+        if let uid = currentUserId, !uid.isEmpty {
+            if uid != entry.actor.id { return "僅建立此筆紀錄的人員可編輯。" }
+        } else {
+            return "無法確認使用者身分，無法編輯。"
+        }
+        let st = QualityTaskEditEligibility.normalizedStatus(task.status)
+        if st != "in_progress" { return "僅任務為「進行中」時可編輯執行說明。" }
+        if !QualityTaskEditEligibility.isCreatedWithinLastCalendarDays(entry.occurredAt, days: 3) {
+            return "此筆紀錄已超過三天，無法編輯。"
+        }
+        return "目前無法編輯。"
     }
 }
 
@@ -177,6 +199,64 @@ struct ExecutorUserDto: Codable, Sendable {
     let id: String
     let username: String?
     let displayName: String?
+}
+
+extension TaskLedgerPresentation {
+    /// `latestSubmission.executions` 無 ledger 時之草稿列；規則與 `canModifyDraftExecution` 對齊。
+    static func canModifyFallbackExecution(
+        ex: ExecutionRecordDto,
+        task: QualityTaskDto,
+        currentUserId: String?
+    ) -> Bool {
+        guard ex.submissionId == nil else { return false }
+        guard let uid = currentUserId, !uid.isEmpty, let eid = ex.executor?.id, eid == uid else { return false }
+        guard QualityTaskEditEligibility.normalizedStatus(task.status) == "in_progress" else { return false }
+        let ref = ex.executedAt ?? ex.createdAt
+        return QualityTaskEditEligibility.isCreatedWithinLastCalendarDays(ref, days: 3)
+    }
+
+    static func fallbackExecutionEditBlockedReason(
+        ex: ExecutionRecordDto,
+        task: QualityTaskDto,
+        currentUserId: String?,
+        isOnline: Bool
+    ) -> String? {
+        if isOnline, canModifyFallbackExecution(ex: ex, task: task, currentUserId: currentUserId) { return nil }
+        if !isOnline { return "離線時無法編輯執行說明。" }
+        if ex.submissionId != nil { return "已送出後無法再編輯此筆說明。" }
+        if let uid = currentUserId, !uid.isEmpty, let eid = ex.executor?.id, eid != uid {
+            return "僅建立此筆紀錄的人員可編輯。"
+        } else if currentUserId == nil || (currentUserId?.isEmpty == true) {
+            return "無法確認使用者身分，無法編輯。"
+        }
+        if QualityTaskEditEligibility.normalizedStatus(task.status) != "in_progress" {
+            return "僅任務為「進行中」時可編輯執行說明。"
+        }
+        let ref = ex.executedAt ?? ex.createdAt
+        if !QualityTaskEditEligibility.isCreatedWithinLastCalendarDays(ref, days: 3) {
+            return "此筆紀錄已超過三天，無法編輯。"
+        }
+        return "目前無法編輯。"
+    }
+
+    static func ledgerEntryFromFallbackExecution(_ ex: ExecutionRecordDto) -> TaskLedgerEntryDto {
+        let actorId = ex.executor?.id ?? ""
+        return TaskLedgerEntryDto(
+            id: ex.id,
+            kind: .execution,
+            occurredAt: ex.executedAt ?? ex.createdAt ?? Date(),
+            submissionId: ex.submissionId,
+            round: nil,
+            actor: TaskLedgerActorDto(
+                id: actorId,
+                username: ex.executor?.username,
+                displayName: ex.executor?.displayName
+            ),
+            body: ex.executionReply,
+            result: nil,
+            attachments: ex.attachments
+        )
+    }
 }
 
 struct ViewerFlagsDto: Codable, Sendable {
@@ -232,6 +312,12 @@ struct CreateExecutionResponseDto: Decodable, Sendable {
 struct CreateExecutionUploadWarningDto: Decodable, Sendable {
     let filename: String
     let error: String
+}
+
+/// POST `.../executions/:id/attachments`（`data` 於 201／207 形狀不同，僅解碼頂層欄位即可）。
+struct UploadExecutionAttachmentsResponseDto: Decodable, Sendable {
+    let success: Bool?
+    let message: String?
 }
 
 // MARK: - Quality drawings list

@@ -12,6 +12,7 @@ enum QualityTaskSearch {
             task.executor?.displayName,
             task.executor?.name,
             task.status.map { QualityTaskStatusLabels.displayName(for: $0) },
+            task.createdAt.map { AppDateTimeFormat.fullDateTime($0) },
         ].compactMap { $0 } + (task.id.hasPrefix("pending-") ? ["尚未上傳", "離線新增"] : [])
         return fields.contains { $0.lowercased().contains(q) }
     }

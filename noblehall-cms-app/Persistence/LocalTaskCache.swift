@@ -21,7 +21,8 @@ enum LocalTaskCache {
                     drawingId: item.qualityDrawing?.id,
                     drawingName: item.qualityDrawing?.name,
                     title: item.name ?? "未命名任務",
-                    status: item.status
+                    status: item.status,
+                    createdAt: item.createdAt
                 )
             )
         }

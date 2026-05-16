@@ -7,6 +7,9 @@ import UniformTypeIdentifiers
 /// 與後端 `QUALITY_TASK_HOUSEHOLD_POINT_ID_PREFIX` 一致：`repository` 群組點位 `id` 為此前綴 + `group.uuid`。
 private let qualityTaskHouseholdPointIdPrefix = "qt-hh:"
 
+/// 與後端及「新增執行紀錄」相同：單筆執行最多附件數。
+private let maxExecutionAttachmentsPerEntry = 3
+
 /// 任務在平面圖上的空間錨點（多為 Web PlanViewer／pdf.js 畫布像素；亦可能為 0…1 正規化）。
 private struct TaskSpaceMarker: Equatable {
     let x: Double
@@ -41,11 +44,14 @@ struct TaskDetailView: View {
     @State private var showTaskEditSheet = false
     @State private var bottomTab: BottomTab = .task
     @State private var showAddExecution = false
+    /// 新增執行紀錄 sheet 預設展開至大高度（仍可拖回中間）。
+    @State private var addExecutionSheetDetent: PresentationDetent = .large
     @State private var isLoading = true
     @State private var pendingExecutions: [PendingExecutionOutbox] = []
     @State private var executionSaveNotice: String?
     @State private var editingLedgerExecution: TaskLedgerEntryDto?
     @State private var executionEditDraftText = ""
+    @State private var executionEditPhotoSelection: [PhotosPickerItem] = []
     @State private var executionEditError: String?
     @State private var isSavingExecutionEdit = false
     @State private var showDeleteExecutionConfirm = false
@@ -75,6 +81,20 @@ struct TaskDetailView: View {
 
                 // 錯誤提示須放在**上方**：`.sheet` 半屏會蓋住螢幕下半部，先前放在底部等於被白底遮住。
                 VStack(spacing: 0) {
+                    if let planTitle = resolvedQualityDrawingTitle {
+                        Text(planTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.8)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(.ultraThinMaterial)
+                            .accessibilityAddTraits(.isHeader)
+                            .accessibilityLabel("平面圖 \(planTitle)")
+                    }
                     HStack(alignment: .top, spacing: 8) {
                         Group {
                             if (floorPlanError?.isEmpty == false) || (loadError?.isEmpty == false) {
@@ -227,7 +247,9 @@ struct TaskDetailView: View {
                     return ok
                 }
             )
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.medium, .large], selection: $addExecutionSheetDetent)
+            .presentationDragIndicator(.visible)
+            .onAppear { addExecutionSheetDetent = .large }
         }
         .sheet(isPresented: $showTaskEditSheet) {
             Group {
@@ -310,10 +332,10 @@ struct TaskDetailView: View {
                 LabeledContent("審查人", value: reviewer)
             }
             if let due = t.dueDate {
-                LabeledContent("到期日", value: due.formatted(date: .abbreviated, time: .omitted))
+                LabeledContent("到期日", value: AppDateTimeFormat.yearMonthDay(due))
             }
             if let created = t.createdAt {
-                LabeledContent("建立時間", value: created.formatted(date: .abbreviated, time: .shortened))
+                LabeledContent("建立時間", value: AppDateTimeFormat.fullDateTime(created))
             }
             if let desc = t.description, !desc.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -327,6 +349,17 @@ struct TaskDetailView: View {
     private var cachedListRow: CachedTaskRow? {
         let rows = (try? LocalTaskCache.tasks(projectCode: projectCode, context: modelContext)) ?? []
         return rows.first { $0.taskId == taskId }
+    }
+
+    /// 頂部標題：優先詳情 API，否則列表快取之圖面名稱。
+    private var resolvedQualityDrawingTitle: String? {
+        if let s = detail?.task.qualityDrawing?.name?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+            return s
+        }
+        if let s = cachedListRow?.drawingName?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+            return s
+        }
+        return nil
     }
 
     /// 後端 PATCH 任務須帶品質圖面 id（巢狀路由）。
@@ -367,111 +400,40 @@ struct TaskDetailView: View {
     }
 
     private var executionList: some View {
-        List {
-            if !network.isConnected {
-                Section {
-                    Label("離線模式：執行紀錄將暫存，連線後自動上傳", systemImage: "icloud.and.arrow.up")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 14) {
+                if !network.isConnected {
+                    executionNoticeCard(
+                        title: "離線模式",
+                        message: "執行紀錄將暫存，連線後自動上傳。",
+                        systemImage: "icloud.and.arrow.up",
+                        tint: .secondary
+                    )
                 }
-            }
-            if let notice = executionSaveNotice, !notice.isEmpty {
-                Section {
-                    Text(notice)
-                        .font(.footnote)
-                        .foregroundStyle(.green)
+                if let notice = executionSaveNotice, !notice.isEmpty {
+                    executionNoticeCard(
+                        title: "已儲存",
+                        message: notice,
+                        systemImage: "checkmark.circle.fill",
+                        tint: .green
+                    )
                 }
-            }
-            ForEach(pendingExecutions, id: \.localId) { pending in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(session.currentUser?.displayName ?? "我")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                        Spacer()
-                        Text("待上傳")
-                            .font(.caption2)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.orange.opacity(0.2), in: Capsule())
-                            .foregroundStyle(.orange)
+                ForEach(pendingExecutions, id: \.localId) { pending in
+                    pendingExecutionCard(pending: pending)
+                }
+                if let ledger = detail?.ledger, !ledger.isEmpty, let task = detail?.task {
+                    ForEach(Array(ledger.reversed())) { entry in
+                        ledgerEntryCard(entry: entry, task: task)
                     }
-                    if !pending.executionReply.isEmpty {
-                        Text(pending.executionReply).font(.body)
+                } else if let task = detail?.task, let items = detail?.latestSubmission?.executions, !items.isEmpty {
+                    ForEach(Array(items.reversed())) { ex in
+                        fallbackExecutionCard(ex: ex, task: task)
                     }
-                    let photoCount = ExecutionOutbox.photoCount(for: pending)
-                    if photoCount > 0 {
-                        Label("\(photoCount) 張照片（待上傳）", systemImage: "photo")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(pending.enqueuedAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 4)
+                addExecutionCardButton
             }
-            if let ledger = detail?.ledger, !ledger.isEmpty, let task = detail?.task {
-                Section {
-                    ForEach(ledger) { entry in
-                        ledgerRow(entry: entry, task: task)
-                            .contextMenu {
-                                if network.isConnected,
-                                   TaskLedgerPresentation.canModifyDraftExecution(
-                                       entry: entry,
-                                       task: task,
-                                       currentUserId: session.currentUser?.id
-                                   )
-                                {
-                                    Button("編輯說明") {
-                                        executionEditDraftText = entry.body ?? ""
-                                        executionEditError = nil
-                                        editingLedgerExecution = entry
-                                    }
-                                    Button("刪除", role: .destructive) {
-                                        pendingDeleteLedgerEntry = entry
-                                        showDeleteExecutionConfirm = true
-                                    }
-                                }
-                            }
-                    }
-                } header: {
-                    ledgerTableHeader
-                }
-            } else if let items = detail?.latestSubmission?.executions, !items.isEmpty {
-                Section {
-                    ForEach(items) { ex in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(ex.executor?.displayName ?? ex.executor?.username ?? "—")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            if let r = ex.executionReply, !r.isEmpty { Text(r).font(.body) }
-                            let attCount = ex.attachments?.count ?? 0
-                            if attCount > 0 {
-                                Label("\(attCount) 個附件", systemImage: "paperclip")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let d = ex.executedAt {
-                                Text(d.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                } header: {
-                    Text("執行紀錄")
-                }
-            }
-            Section {
-                Button {
-                    executionSaveNotice = nil
-                    showAddExecution = true
-                } label: {
-                    Label("新增執行紀錄", systemImage: "plus.circle.fill")
-                }
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
         .sheet(item: $editingLedgerExecution) { entry in
             NavigationStack {
@@ -479,6 +441,46 @@ struct TaskDetailView: View {
                     Section {
                         TextField("執行說明", text: $executionEditDraftText, axis: .vertical)
                             .lineLimit(4 ... 14)
+                    }
+                    Section {
+                        if let list = entry.attachments, !list.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(list) { att in
+                                        ExecutionAttachmentThumbnail(attachment: att, spaceId: session.spaceId)
+                                    }
+                                }
+                            }
+                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                        }
+                        if network.isConnected, maxAdditionalExecutionPhotos(for: entry) > 0 {
+                            PhotosPicker(
+                                selection: $executionEditPhotoSelection,
+                                maxSelectionCount: maxAdditionalExecutionPhotos(for: entry),
+                                matching: .images
+                            ) {
+                                Label(
+                                    executionEditPhotoSelection.isEmpty
+                                        ? "加入照片"
+                                        : "已選 \(executionEditPhotoSelection.count) 張（最多再 \(maxAdditionalExecutionPhotos(for: entry)) 張）",
+                                    systemImage: "photo.on.rectangle.angled"
+                                )
+                            }
+                            .disabled(isSavingExecutionEdit)
+                        } else if !network.isConnected {
+                            Text("連線後才能上傳附件。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else if maxAdditionalExecutionPhotos(for: entry) == 0 {
+                            Text("已達每筆 \(maxExecutionAttachmentsPerEntry) 個附件上限。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("與新增紀錄相同：含既有附件每筆最多 \(maxExecutionAttachmentsPerEntry) 個。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } header: {
+                        Text("附件")
                     }
                     if let executionEditError, !executionEditError.isEmpty {
                         Section {
@@ -493,18 +495,20 @@ struct TaskDetailView: View {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("取消") {
+                            executionEditPhotoSelection = []
                             editingLedgerExecution = nil
                         }
                     }
                     ToolbarItem(placement: .confirmationAction) {
                         Button("儲存") {
-                            Task { await saveLedgerExecutionEdit(executionId: entry.id) }
+                            Task { await saveLedgerExecutionEdit(entry: entry) }
                         }
-                        .disabled(isSavingExecutionEdit)
+                        .disabled(isSavingExecutionEdit || !ledgerExecutionEditHasChanges(entry: entry))
                     }
                 }
                 .onAppear {
                     executionEditDraftText = entry.body ?? ""
+                    executionEditPhotoSelection = []
                     executionEditError = nil
                 }
             }
@@ -522,68 +526,319 @@ struct TaskDetailView: View {
                 pendingDeleteLedgerEntry = nil
             }
         } message: {
-            Text("此動作無法復原。僅未送出、三天內且由您建立的執行紀錄可刪除。")
+            Text("此動作無法復原。僅未送出、任務進行中、日曆三天內且由您建立的執行紀錄可刪除。")
         }
     }
 
-    private var ledgerTableHeader: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("時間")
-                .frame(width: 108, alignment: .leading)
-            Text("類型")
-                .frame(width: 72, alignment: .leading)
-            Text("人員／說明")
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Text("輪次")
-                .frame(width: 36, alignment: .center)
-            Text("附件")
-                .frame(width: 36, alignment: .trailing)
+    private var addExecutionCardButton: some View {
+        Button {
+            executionSaveNotice = nil
+            showAddExecution = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(Color.accentColor)
+                Text("新增執行紀錄")
+                    .font(.headline)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 1)
+            )
         }
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .textCase(nil)
+        .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private func ledgerRow(entry: TaskLedgerEntryDto, task: QualityTaskDto) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(entry.occurredAt.formatted(date: .abbreviated, time: .shortened))
-                .font(.caption)
-                .frame(width: 108, alignment: .leading)
-            Text(TaskLedgerPresentation.kindLabel(entry.kind))
-                .font(.caption2)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color(.systemGray5), in: Capsule())
-                .frame(width: 72, alignment: .leading)
+    private func executionNoticeCard(title: String, message: String, systemImage: String, tint: Color) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 4) {
-                Text(entry.actor.displayName ?? entry.actor.username ?? entry.actor.id)
-                    .font(.subheadline.weight(.medium))
-                if let body = entry.body, !body.isEmpty {
-                    Text(body)
-                        .font(.footnote)
-                        .foregroundStyle(.primary)
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(message).font(.footnote).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color(.separator).opacity(0.35), lineWidth: 0.5)
+        )
+    }
+
+    private func pendingExecutionCard(pending: PendingExecutionOutbox) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(session.currentUser?.displayName ?? "我")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("待上傳")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.18), in: Capsule())
+                    .foregroundStyle(.orange)
+            }
+            if !pending.executionReply.isEmpty {
+                Text(pending.executionReply).font(.body)
+            }
+            let photoCount = ExecutionOutbox.photoCount(for: pending)
+            if photoCount > 0 {
+                Label("\(photoCount) 張照片（待上傳）", systemImage: "photo")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(AppDateTimeFormat.fullDateTime(pending.enqueuedAt))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color(.separator).opacity(0.35), lineWidth: 0.5)
+        )
+    }
+
+    private func ledgerEntryCard(entry: TaskLedgerEntryDto, task: QualityTaskDto) -> some View {
+        let canEdit = network.isConnected
+            && TaskLedgerPresentation.canModifyDraftExecution(
+                entry: entry,
+                task: task,
+                currentUserId: session.currentUser?.id
+            )
+        let hint = TaskLedgerPresentation.draftExecutionEditBlockedReason(
+            entry: entry,
+            task: task,
+            currentUserId: session.currentUser?.id,
+            isOnline: network.isConnected
+        )
+
+        return Group {
+            if canEdit {
+                Button {
+                    executionEditDraftText = entry.body ?? ""
+                    executionEditError = nil
+                    editingLedgerExecution = entry
+                } label: {
+                    ledgerEntryCardBody(entry: entry, footnote: nil, showChevron: true)
                 }
-                if let r = entry.result, !r.isEmpty {
-                    Text(QualityTaskStatusLabels.displayName(for: r))
+                .buttonStyle(.plain)
+            } else {
+                ledgerEntryCardBody(
+                    entry: entry,
+                    footnote: entry.kind == .execution ? hint : nil,
+                    showChevron: false
+                )
+            }
+        }
+        .contextMenu {
+            if network.isConnected,
+               TaskLedgerPresentation.canModifyDraftExecution(
+                   entry: entry,
+                   task: task,
+                   currentUserId: session.currentUser?.id
+               )
+            {
+                Button("編輯說明") {
+                    executionEditDraftText = entry.body ?? ""
+                    executionEditError = nil
+                    editingLedgerExecution = entry
+                }
+                Button("刪除", role: .destructive) {
+                    pendingDeleteLedgerEntry = entry
+                    showDeleteExecutionConfirm = true
+                }
+            }
+        }
+    }
+
+    private func ledgerEntryCardBody(entry: TaskLedgerEntryDto, footnote: String?, showChevron: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(TaskLedgerPresentation.kindLabel(entry.kind))
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color(.systemGray5), in: Capsule())
+                    if let r = entry.round {
+                        Text("第 \(r) 輪")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 0)
+                    Text(AppDateTimeFormat.fullDateTime(entry.occurredAt))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+                Text(entry.actor.displayName ?? entry.actor.username ?? entry.actor.id)
+                    .font(.subheadline.weight(.semibold))
+                if let body = entry.body, !body.isEmpty {
+                    Text(body).font(.body)
+                }
+                if let r = entry.result, !r.isEmpty {
+                    Text(QualityTaskStatusLabels.displayName(for: r))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                let attCount = entry.attachments?.count ?? 0
+                if attCount > 0 {
+                    Label("\(attCount) 個附件", systemImage: "paperclip")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let footnote, !footnote.isEmpty {
+                    Text(footnote)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Text(entry.round.map { String($0) } ?? "—")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(width: 36, alignment: .center)
-            Text("\(entry.attachments?.count ?? 0)")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(width: 36, alignment: .trailing)
+            if showChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
+            }
         }
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color(.separator).opacity(0.35), lineWidth: 0.5)
+        )
     }
 
-    private func saveLedgerExecutionEdit(executionId: String) async {
+    private func fallbackExecutionCard(ex: ExecutionRecordDto, task: QualityTaskDto) -> some View {
+        let canEdit = network.isConnected
+            && TaskLedgerPresentation.canModifyFallbackExecution(ex: ex, task: task, currentUserId: session.currentUser?.id)
+        let hint = TaskLedgerPresentation.fallbackExecutionEditBlockedReason(
+            ex: ex,
+            task: task,
+            currentUserId: session.currentUser?.id,
+            isOnline: network.isConnected
+        )
+        let synthetic = TaskLedgerPresentation.ledgerEntryFromFallbackExecution(ex)
+
+        return Group {
+            if canEdit {
+                Button {
+                    executionEditDraftText = synthetic.body ?? ""
+                    executionEditError = nil
+                    editingLedgerExecution = synthetic
+                } label: {
+                    fallbackExecutionCardBody(ex: ex, footnote: nil, showChevron: true)
+                }
+                .buttonStyle(.plain)
+            } else {
+                fallbackExecutionCardBody(ex: ex, footnote: hint, showChevron: false)
+            }
+        }
+        .contextMenu {
+            if network.isConnected,
+               TaskLedgerPresentation.canModifyFallbackExecution(ex: ex, task: task, currentUserId: session.currentUser?.id)
+            {
+                Button("編輯說明") {
+                    executionEditDraftText = synthetic.body ?? ""
+                    executionEditError = nil
+                    editingLedgerExecution = synthetic
+                }
+                Button("刪除", role: .destructive) {
+                    pendingDeleteLedgerEntry = synthetic
+                    showDeleteExecutionConfirm = true
+                }
+            }
+        }
+    }
+
+    private func fallbackExecutionCardBody(ex: ExecutionRecordDto, footnote: String?, showChevron: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("執行")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color(.systemGray5), in: Capsule())
+                    Spacer(minLength: 0)
+                    if let d = ex.executedAt ?? ex.createdAt {
+                        Text(AppDateTimeFormat.fullDateTime(d))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(ex.executor?.displayName ?? ex.executor?.username ?? "—")
+                    .font(.subheadline.weight(.semibold))
+                if let r = ex.executionReply, !r.isEmpty { Text(r).font(.body) }
+                let attCount = ex.attachments?.count ?? 0
+                if attCount > 0 {
+                    Label("\(attCount) 個附件", systemImage: "paperclip")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let footnote, !footnote.isEmpty {
+                    Text(footnote)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if showChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color(.separator).opacity(0.35), lineWidth: 0.5)
+        )
+    }
+
+    private func maxAdditionalExecutionPhotos(for entry: TaskLedgerEntryDto) -> Int {
+        max(0, maxExecutionAttachmentsPerEntry - (entry.attachments?.count ?? 0))
+    }
+
+    private func ledgerExecutionEditHasChanges(entry: TaskLedgerEntryDto) -> Bool {
+        let original = (entry.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = executionEditDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed != original || !executionEditPhotoSelection.isEmpty
+    }
+
+    private func saveLedgerExecutionEdit(entry: TaskLedgerEntryDto) async {
         guard let sid = session.spaceId else {
             executionEditError = "缺少 Space。"
             return
@@ -596,16 +851,46 @@ struct TaskDetailView: View {
         executionEditError = nil
         defer { isSavingExecutionEdit = false }
         let trimmed = executionEditDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let original = (entry.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let textChanged = trimmed != original
+        let maxNew = maxAdditionalExecutionPhotos(for: entry)
         do {
-            try await QualityTaskAPI.updateExecution(
-                projectCode: projectCode,
-                qualityDrawingId: qdid,
-                taskId: taskId,
-                executionId: executionId,
-                body: UpdateExecutionBody(executionReply: trimmed.isEmpty ? nil : trimmed),
-                spaceId: sid
-            )
+            if textChanged {
+                try await QualityTaskAPI.updateExecution(
+                    projectCode: projectCode,
+                    qualityDrawingId: qdid,
+                    taskId: taskId,
+                    executionId: entry.id,
+                    body: UpdateExecutionBody(executionReply: trimmed.isEmpty ? nil : trimmed),
+                    spaceId: sid
+                )
+            }
+            if !executionEditPhotoSelection.isEmpty {
+                var newFiles: [(data: Data, filename: String, mimeType: String)] = []
+                for item in executionEditPhotoSelection.prefix(maxNew) {
+                    newFiles.append(try await ExecutionPhotoPickerSupport.jpegPayload(from: item))
+                }
+                if !newFiles.isEmpty {
+                    let uploadResp = try await QualityTaskAPI.uploadExecutionAttachments(
+                        projectCode: projectCode,
+                        qualityDrawingId: qdid,
+                        taskId: taskId,
+                        executionId: entry.id,
+                        attachments: newFiles,
+                        spaceId: sid
+                    )
+                    if uploadResp.success == false {
+                        executionSaveNotice = uploadResp.message ?? "部分檔案上傳失敗"
+                        editingLedgerExecution = nil
+                        executionEditPhotoSelection = []
+                        await loadAll()
+                        refreshPendingExecutions()
+                        return
+                    }
+                }
+            }
             editingLedgerExecution = nil
+            executionEditPhotoSelection = []
             await loadAll()
             refreshPendingExecutions()
         } catch {
@@ -1438,6 +1723,46 @@ private extension UIImage {
     }
 }
 
+private struct ExecutionAttachmentThumbnail: View {
+    let attachment: ExecutionAttachmentDto
+    let spaceId: String?
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    Color(.systemGray5)
+                    ProgressView()
+                        .scaleEffect(0.75)
+                }
+            }
+        }
+        .frame(width: 56, height: 56)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .task(id: attachment.id) {
+            await loadImage()
+        }
+    }
+
+    private func loadImage() async {
+        guard let sid = spaceId, !sid.isEmpty else { return }
+        let candidates = [attachment.thumbnailUrl, attachment.url].compactMap(URLResolver.absoluteAssetURL)
+        for u in candidates {
+            if let data = try? await APIClient.shared.fetchBinary(url: u, spaceId: sid),
+               let img = UIImage(data: data) {
+                await MainActor.run { image = img }
+                return
+            }
+        }
+    }
+}
+
 private struct AddExecutionSheet: View {
     let onCancel: () -> Void
     let onSave: (String, [(data: Data, filename: String, mimeType: String)]) async -> Bool
@@ -1448,7 +1773,7 @@ private struct AddExecutionSheet: View {
     @State private var isPreparing = false
     @State private var localError: String?
 
-    private let maxPhotos = 3
+    private let maxPhotos = maxExecutionAttachmentsPerEntry
 
     var body: some View {
         NavigationStack {

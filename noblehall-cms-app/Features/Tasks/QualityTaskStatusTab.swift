@@ -1,7 +1,7 @@
 import Foundation
 
 /// 任務列表狀態分段（我的任務、任務管理－全部任務共用）。
-enum QualityTaskStatusTab: String, CaseIterable, Identifiable {
+enum QualityTaskStatusTab: String, CaseIterable, Identifiable, Hashable {
     case pendingAssignment = "待指派"
     case inProgress = "執行中"
     case inReview = "待審核"

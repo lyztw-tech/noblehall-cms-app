@@ -362,6 +362,30 @@ enum QualityTaskAPI: Sendable {
         )
     }
 
+    /// 為既有執行紀錄追加附件（multipart `attachments`）；與建立時相同之每筆上限由後端檢核。
+    static func uploadExecutionAttachments(
+        projectCode: String,
+        qualityDrawingId: String,
+        taskId: String,
+        executionId: String,
+        attachments: [(data: Data, filename: String, mimeType: String)],
+        spaceId: String
+    ) async throws -> UploadExecutionAttachmentsResponseDto {
+        let path =
+            "projects/\(projectCode)/quality-drawings/\(qualityDrawingId)/tasks/\(taskId)/submissions/executions/\(executionId)/attachments"
+        let parts = attachments.map {
+            MultipartFilePart(fieldName: "attachments", filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
+        }
+        return try await APIClient.shared.sendMultipart(
+            .POST,
+            path: path,
+            queryItems: nil,
+            fields: [:],
+            files: parts,
+            spaceId: spaceId
+        )
+    }
+
     static func deleteExecution(
         projectCode: String,
         qualityDrawingId: String,

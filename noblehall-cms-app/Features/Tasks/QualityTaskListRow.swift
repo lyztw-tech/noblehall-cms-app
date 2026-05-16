@@ -17,6 +17,18 @@ struct QualityTaskListRow: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+                if let created = task.createdAt {
+                    HStack(spacing: 5) {
+                        Image(systemName: "calendar.badge.clock")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Text(AppDateTimeFormat.fullDateTime(created))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("建立時間 \(AppDateTimeFormat.fullDateTime(created))")
+                }
                 if showsDrawingAndStatus {
                     HStack(spacing: 8) {
                         if let drawing = task.qualityDrawing?.name, !drawing.isEmpty {

@@ -26,6 +26,7 @@ final class CachedTaskRow {
     var title: String
     var status: String?
     var cachedAt: Date
+    var createdAt: Date?
 
     init(
         cacheKey: String,
@@ -35,7 +36,8 @@ final class CachedTaskRow {
         drawingName: String?,
         title: String,
         status: String?,
-        cachedAt: Date = Date()
+        cachedAt: Date = Date(),
+        createdAt: Date? = nil
     ) {
         self.cacheKey = cacheKey
         self.projectCode = projectCode
@@ -45,6 +47,7 @@ final class CachedTaskRow {
         self.title = title
         self.status = status
         self.cachedAt = cachedAt
+        self.createdAt = createdAt
     }
 }
 

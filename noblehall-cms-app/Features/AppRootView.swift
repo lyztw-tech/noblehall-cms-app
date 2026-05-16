@@ -22,9 +22,20 @@ struct AppRootView: View {
         .task(id: bootstrapTaskKey) {
             await bootstrapSessionAndPreload()
         }
-        .onChange(of: network.isConnected) { _, online in
-            guard online else { return }
-            Task { await bootstrapSessionAndPreload() }
+        .task {
+            await NetworkReconnectNotifier.requestAuthorizationIfNotDetermined()
+        }
+        .onChange(of: network.isConnected) { wasConnected, isConnected in
+            Task {
+                await NetworkReconnectNotifier.handleTransition(
+                    wasConnected: wasConnected,
+                    isConnected: isConnected,
+                    isLoggedIn: session.isLoggedIn
+                )
+            }
+            if isConnected {
+                Task { await bootstrapSessionAndPreload() }
+            }
         }
     }
 
