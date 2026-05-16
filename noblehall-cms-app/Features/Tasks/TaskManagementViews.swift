@@ -42,12 +42,14 @@ struct TaskManagementRootView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 3) {
+                    HStack(spacing: 5) {
+                        Image(systemName: listMode == .floorPlan ? "map.fill" : "checklist")
                         Text(listMode.menuTitle)
                         Image(systemName: "chevron.down")
                             .font(.caption2.weight(.semibold))
                     }
-                    .font(.subheadline.weight(.medium))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(NobleHallTheme.brandGold)
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -74,6 +76,35 @@ struct TaskManagementRootView: View {
             TaskManagementFilterRootView(projectCode: projectCode, store: filterStore)
         }
     }
+}
+
+
+private func taskManagementHeader(title: String, subtitle: String, systemImage: String) -> some View {
+    HStack(alignment: .top, spacing: 12) {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(NobleHallTheme.brandGold.opacity(0.12))
+            Image(systemName: systemImage)
+                .foregroundStyle(NobleHallTheme.brandGold)
+                .font(.title3.weight(.semibold))
+        }
+        .frame(width: 48, height: 48)
+        VStack(alignment: .leading, spacing: 4) {
+            Text("TASK MANAGEMENT")
+                .font(.caption.weight(.semibold))
+                .tracking(1.6)
+                .foregroundStyle(NobleHallTheme.brandGold)
+            Text(title)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(NobleHallTheme.ink)
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(NobleHallTheme.secondaryInk)
+        }
+        Spacer(minLength: 0)
+    }
+    .padding(16)
+    .nobleHallCard(cornerRadius: 22)
 }
 
 // MARK: - Routes
@@ -117,23 +148,18 @@ struct TaskManagementAllTasksView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            taskManagementHeader(title: "全部品質任務", subtitle: "跨平面圖查看所有品質事項", systemImage: "checklist")
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
             Button {
                 showSearch = true
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    Text("搜尋")
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Color(.systemGray6), in: Capsule())
+                NobleHallSearchPill(title: "搜尋任務", systemImage: "magnifyingglass")
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
-            .padding(.top, 8)
             .padding(.bottom, 4)
             .accessibilityLabel("搜尋任務")
             .accessibilityHint("開啟搜尋頁面")
@@ -165,10 +191,13 @@ struct TaskManagementAllTasksView: View {
                         }
                     }
                     .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .background(NobleHallTheme.warmBackground)
                     .dismissKeyboardOnScroll()
                 }
             }
         }
+        .nobleHallScreen()
         .overlay {
             if !isLoading, tasks.isEmpty, loadError == nil {
                 ContentUnavailableView {
@@ -182,6 +211,7 @@ struct TaskManagementAllTasksView: View {
                 }
             }
         }
+        .nobleHallScreen()
         .refreshable { await load() }
         .task { await load() }
         .onChange(of: filterStore.revision) { _, _ in
@@ -249,23 +279,18 @@ struct TaskManagementFloorPlanListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            taskManagementHeader(title: "平面圖任務管理", subtitle: "先選擇樓層，再依狀態快速檢查", systemImage: "map.fill")
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
             Button {
                 showSearch = true
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    Text("搜尋")
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Color(.systemGray6), in: Capsule())
+                NobleHallSearchPill(title: "搜尋平面圖", systemImage: "magnifyingglass")
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
-            .padding(.top, 8)
             .padding(.bottom, 4)
             .accessibilityLabel("搜尋平面圖")
             .accessibilityHint("開啟搜尋頁面")
@@ -287,6 +312,8 @@ struct TaskManagementFloorPlanListView: View {
                         }
                     }
                     .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .background(NobleHallTheme.warmBackground)
                     .dismissKeyboardOnScroll()
                 }
             }
@@ -426,14 +453,23 @@ private struct DrawingListRow: View {
     let item: QualityDrawingListItemDto
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(item.drawing.name)
-                .font(.headline)
-            Text("共 \(item.taskCount ?? 0) 項任務")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(NobleHallTheme.brandGold.opacity(0.12))
+                Image(systemName: "doc.richtext.fill")
+                    .foregroundStyle(NobleHallTheme.brandGold)
+            }
+            .frame(width: 44, height: 44)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.drawing.name)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(NobleHallTheme.ink)
+                NobleHallStatusPill(title: "共 \(item.taskCount ?? 0) 項任務", systemImage: "checklist", tint: NobleHallTheme.brandGold)
+            }
+            Spacer(minLength: 0)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 6)
     }
 }
 
@@ -482,7 +518,7 @@ struct TaskManagementStatusBoardView: View {
                 .padding(.bottom, 16)
             }
         }
-        .background(Color(.systemGroupedBackground))
+        .background(NobleHallTheme.warmBackground)
         .navigationTitle(route.name)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: TaskManagementStatusRoute.self) { statusRoute in
@@ -515,9 +551,9 @@ private struct TaskManagementStatusCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(NobleHallTheme.cardBackground, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(tint.opacity(0.25), lineWidth: 1)
         )
     }

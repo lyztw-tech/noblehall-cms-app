@@ -124,23 +124,18 @@ struct MyTasksView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                taskHero
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
+
                 Button {
                     showSearch = true
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                        Text("搜尋")
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(Color(.systemGray6), in: Capsule())
+                    NobleHallSearchPill(title: "搜尋任務、空間或執行人", systemImage: "magnifyingglass")
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 16)
-                .padding(.top, 8)
                 .padding(.bottom, 4)
                 .accessibilityLabel("搜尋任務")
                 .accessibilityHint("開啟搜尋頁面")
@@ -163,7 +158,9 @@ struct MyTasksView: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(NobleHallTheme.warmBackground)
             }
+            .nobleHallScreen()
             .navigationTitle("我的任務")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -275,8 +272,8 @@ struct MyTasksView: View {
                             .font(.title2.weight(.semibold))
                             .foregroundStyle(.white)
                             .frame(width: 56, height: 56)
-                            .background(Color.accentColor, in: Circle())
-                            .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+                            .background(NobleHallTheme.brandGold, in: Circle())
+                            .shadow(color: NobleHallTheme.brandGold.opacity(0.28), radius: 10, y: 5)
                     }
                     .padding(.trailing, 20)
                     .padding(.bottom, 24)
@@ -284,6 +281,56 @@ struct MyTasksView: View {
                 }
             }
         }
+    }
+
+
+    private var taskHero: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("NOBLE HALL")
+                        .font(.caption.weight(.semibold))
+                        .tracking(2)
+                        .foregroundStyle(NobleHallTheme.brandGold)
+                    Text("今日品質任務")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(NobleHallTheme.ink)
+                    Text("專案 \(projectCode) · \(listScope.rawValue)")
+                        .font(.subheadline)
+                        .foregroundStyle(NobleHallTheme.secondaryInk)
+                }
+                Spacer(minLength: 0)
+                NobleHallStatusPill(
+                    title: network.isConnected ? "線上" : "離線",
+                    systemImage: network.isConnected ? "wifi" : "wifi.slash",
+                    tint: network.isConnected ? NobleHallTheme.success : NobleHallTheme.warning
+                )
+            }
+
+            HStack(spacing: 10) {
+                summaryMetric(title: statusTab.rawValue, value: "\(filteredTasks.count)")
+                summaryMetric(title: "待上傳", value: "\(pendingAsListItems.count)")
+                summaryMetric(title: "篩選", value: "\(filterStore.activeConditionCount)")
+            }
+        }
+        .padding(18)
+        .nobleHallCard(cornerRadius: 24)
+    }
+
+    private func summaryMetric(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(NobleHallTheme.ink)
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(NobleHallTheme.secondaryInk)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(NobleHallTheme.brandGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private struct TaskRoute: Identifiable, Hashable {

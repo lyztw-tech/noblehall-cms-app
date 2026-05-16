@@ -12,37 +12,106 @@ struct ProjectListView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if !network.isConnected {
-                    Section {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    NobleHallSectionHeader(
+                        eyebrow: "Projects",
+                        title: "選擇工務專案",
+                        subtitle: "請選擇今天要管理的建案。App 會自動同步任務與平面圖，讓現場作業更清楚。",
+                        systemImage: "square.grid.2x2.fill"
+                    )
+                    .padding(.top, 12)
+
+                    if !network.isConnected {
                         Label("離線模式：顯示上次同步的專案", systemImage: "wifi.slash")
-                            .font(.subheadline)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(NobleHallTheme.warning)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(NobleHallTheme.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
-                }
-                Section {
-                    ForEach(projects) { p in
-                        Button {
-                            session.setSelectedProject(code: p.code)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(p.name).font(.headline)
-                                Text(p.code).font(.caption).foregroundStyle(.secondary)
+
+                    if let loadError {
+                        Label(loadError, systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+
+                    VStack(spacing: 12) {
+                        ForEach(projects) { project in
+                            Button {
+                                session.setSelectedProject(code: project.code)
+                            } label: {
+                                ProjectCard(project: project)
                             }
+                            .buttonStyle(NobleHallPlainCardButtonStyle())
                         }
                     }
+
+                    if isLoading, projects.isEmpty {
+                        ProgressView("載入專案…")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 36)
+                    }
                 }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 28)
             }
-            .navigationTitle("專案列表")
+            .nobleHallScreen()
+            .navigationTitle("專案")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("登出") { Task { await logout() } }
+                        .foregroundStyle(NobleHallTheme.brandGold)
                 }
-            }
-            .overlay {
-                if isLoading, projects.isEmpty { ProgressView() }
             }
             .refreshable { await load(force: true) }
             .task { await load(force: false) }
+        }
+    }
+
+    private struct ProjectCard: View {
+        let project: ProjectListItemDto
+
+        var body: some View {
+            HStack(spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(NobleHallTheme.brandGold.opacity(0.12))
+                    Image(systemName: "building.2.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(NobleHallTheme.brandGold)
+                }
+                .frame(width: 52, height: 52)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(project.name)
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(NobleHallTheme.ink)
+                    HStack(spacing: 6) {
+                        NobleHallStatusPill(title: project.code, systemImage: "number", tint: NobleHallTheme.brandGold)
+                        if !project.status.isEmpty {
+                            NobleHallStatusPill(title: project.status, systemImage: "checkmark.seal", tint: NobleHallTheme.success)
+                        }
+                    }
+                    if let address = project.address, !address.isEmpty {
+                        Text(address)
+                            .font(.caption)
+                            .foregroundStyle(NobleHallTheme.secondaryInk)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(NobleHallTheme.softGold)
+            }
+            .padding(16)
+            .nobleHallCard(cornerRadius: 20)
         }
     }
 
