@@ -1,7 +1,7 @@
 import UIKit
 import UserNotifications
 
-/// 註冊通知中心 delegate，讓 App 在前景也能顯示「已恢復連線」等本地通知橫幅。
+/// 註冊通知中心 delegate：前景橫幅、點擊深連結導向任務等。
 final class NoblehallAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(
         _ application: UIApplication,
@@ -16,6 +16,21 @@ final class NoblehallAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .list, .sound])
+        completionHandler([.banner, .list, .sound, .badge])
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if let link = NotificationLocalPush.link(from: response.notification.request.content.userInfo) {
+            NotificationCenter.default.post(
+                name: .nobleHallNotificationDeepLink,
+                object: nil,
+                userInfo: ["link": link]
+            )
+        }
+        completionHandler()
     }
 }

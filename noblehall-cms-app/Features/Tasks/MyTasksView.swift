@@ -26,7 +26,7 @@ struct MyTasksView: View {
     @State private var loadError: String?
     @State private var isLoading = false
     @State private var selectedRoute: TaskRoute?
-    /// 與 Web 工作台總表對齊：預設「全部」；「指派給我」僅限執行對象為**個人**且 executorId 為本人（不含群組執行）。
+    /// 與 Web 任務管理總表對齊：預設「全部」；「指派給我」僅限執行對象為**個人**且 executorId 為本人（不含群組執行）。
     @State private var listScope: TaskListScope = .all
     @State private var statusTab: QualityTaskStatusTab = .inProgress
     @State private var filterStore = TaskManagementFilterStore()
@@ -113,7 +113,8 @@ struct MyTasksView: View {
                             QualityTaskListRow(
                                 task: t,
                                 showsDrawingAndStatus: false,
-                                showsPendingUploadIcon: t.id.hasPrefix("pending-")
+                                showsPendingUploadIcon: t.id.hasPrefix("pending-"),
+                                showsExecutor: listScope == .all
                             )
                         }
                         .disabled(t.id.hasPrefix("pending-"))
@@ -164,10 +165,19 @@ struct MyTasksView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         ForEach(TaskListScope.allCases) { scope in
-                            Button(scope.rawValue) {
+                            Button {
                                 guard listScope != scope else { return }
                                 listScope = scope
                                 Task { await load(force: true) }
+                            } label: {
+                                HStack {
+                                    Text(scope.rawValue)
+                                    Spacer(minLength: 8)
+                                    if listScope == scope {
+                                        Image(systemName: "checkmark")
+                                            .font(.subheadline.weight(.semibold))
+                                    }
+                                }
                             }
                         }
                     } label: {
@@ -376,7 +386,7 @@ struct MyTasksView: View {
             try modelContext.save()
             await prefetchTaskDetails(loaded, spaceId: sid)
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
             if let rows = try? LocalTaskCache.tasks(projectCode: projectCode, context: modelContext) {
                 tasks = rows.map(Self.mapCached)
             }

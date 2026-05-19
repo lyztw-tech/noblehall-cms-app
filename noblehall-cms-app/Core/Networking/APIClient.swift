@@ -179,15 +179,16 @@ actor APIClient {
             request.httpBody = try APIClientCodec.encodeJSONRequestBody(body)
         }
 
-        let (_, response): (Data, URLResponse)
+        let (data, response): (Data, URLResponse)
         do {
-            (_, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: request)
         } catch {
             throw APIRequestError.transport(error, attemptedURL: url)
         }
         guard let http = response as? HTTPURLResponse else { throw APIRequestError.invalidResponse }
         guard (200 ... 299).contains(http.statusCode) else {
-            throw APIRequestError.httpStatus(code: http.statusCode, body: nil)
+            let text = String(data: data, encoding: .utf8)
+            throw APIRequestError.httpStatus(code: http.statusCode, body: text)
         }
     }
 

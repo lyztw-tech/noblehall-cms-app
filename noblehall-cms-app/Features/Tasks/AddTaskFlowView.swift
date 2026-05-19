@@ -100,7 +100,7 @@ struct QualityDrawingPickerSheet: View {
                 let res = try await QualityTaskAPI.listQualityDrawings(projectCode: projectCode, spaceId: sid)
                 drawings = res.data
             } catch {
-                loadError = error.localizedDescription
+                loadError = error.userFacingMessage
             }
             return
         }
@@ -288,7 +288,7 @@ struct AddTaskPlanScreen: View {
                 }
             }
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
         }
     }
 
@@ -532,7 +532,7 @@ private struct CreateTaskFormSheet: View {
             )
             applyDefaultReviewer()
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
         }
     }
 
@@ -626,7 +626,7 @@ private struct CreateTaskFormSheet: View {
                 try? await Task.sleep(nanoseconds: 800_000_000)
                 onCreated()
             } catch {
-                submitError = error.localizedDescription
+                submitError = error.userFacingMessage
             }
             return
         }
@@ -650,7 +650,7 @@ private struct CreateTaskFormSheet: View {
             }
             onCreated()
         } catch {
-            submitError = error.localizedDescription
+            submitError = error.userFacingMessage
         }
     }
 }
@@ -798,7 +798,7 @@ private struct AddTaskAuthenticatedPlanView: View {
                     return
                 }
             } catch {
-                await MainActor.run { loadError = error.localizedDescription }
+                await MainActor.run { loadError = error.userFacingMessage }
             }
         }
         await MainActor.run { didFail = true }
@@ -859,7 +859,7 @@ private struct AddTaskZoomablePlanView: View {
                     )
                     let incomplete = (p.incompleteTaskCount ?? 0) > 0
                     let selected = p.id == selectedPointId
-                    AddTaskPointMarkerBadge(
+                    QualityPlanPointMarker.badge(
                         count: p.taskCount ?? 0,
                         incomplete: incomplete,
                         selected: selected
@@ -879,32 +879,6 @@ private struct AddTaskZoomablePlanView: View {
                 )
             }
             .clipped()
-        }
-    }
-}
-
-private struct AddTaskPointMarkerBadge: View {
-    let count: Int
-    let incomplete: Bool
-    let selected: Bool
-
-    var body: some View {
-        let border = incomplete ? Color.red : Color.green
-        ZStack {
-            Circle()
-                .fill(.white)
-                .frame(width: 36, height: 36)
-                .overlay(Circle().stroke(border, lineWidth: selected ? 4 : 3))
-                .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
-            if count > 0 {
-                Text("\(count)")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(incomplete ? .red : .green)
-            } else {
-                Image(systemName: "mappin")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(border)
-            }
         }
     }
 }

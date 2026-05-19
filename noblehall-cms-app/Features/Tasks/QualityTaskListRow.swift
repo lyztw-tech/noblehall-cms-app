@@ -4,6 +4,8 @@ struct QualityTaskListRow: View {
     let task: QualityTaskListItemDto
     var showsDrawingAndStatus: Bool = true
     var showsPendingUploadIcon: Bool = false
+    /// 「指派給我」時隱藏執行人；「全部」時顯示。
+    var showsExecutor: Bool = true
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -29,7 +31,7 @@ struct QualityTaskListRow: View {
                     }
                 }
 
-                if let subtitle = Self.subtitle(for: task, showsPendingUploadIcon: showsPendingUploadIcon) {
+                if let subtitle = Self.subtitle(for: task, showsPendingUploadIcon: showsPendingUploadIcon, showsExecutor: showsExecutor) {
                     Text(subtitle)
                         .font(.subheadline)
                         .foregroundStyle(NobleHallTheme.secondaryInk)
@@ -53,7 +55,13 @@ struct QualityTaskListRow: View {
                             NobleHallStatusPill(title: drawingName, systemImage: "doc.text", tint: NobleHallTheme.brandGold)
                         }
                         if let status = task.status, !status.isEmpty {
-                            NobleHallStatusPill(title: QualityTaskStatusLabels.displayName(for: status), systemImage: "circle.fill", tint: statusTint)
+                            let style = QualityTaskStatusStyle.colors(for: status)
+                            NobleHallStatusPill(
+                                title: QualityTaskStatusLabels.displayName(for: status),
+                                systemImage: "circle.fill",
+                                tint: style.foreground,
+                                background: style.background
+                            )
                         }
                     }
                     .lineLimit(1)
@@ -66,24 +74,25 @@ struct QualityTaskListRow: View {
     }
 
     private var statusTint: Color {
-        let raw = (task.status ?? "").lowercased()
-        if raw.contains("review") || raw.contains("審") { return .orange }
-        if raw.contains("progress") || raw.contains("執行") || raw.contains("doing") { return NobleHallTheme.brandGold }
-        if raw.contains("done") || raw.contains("complete") || raw.contains("完成") { return NobleHallTheme.success }
-        if raw.contains("pending") || raw.contains("待") { return NobleHallTheme.warning }
-        return NobleHallTheme.softGold
+        QualityTaskStatusStyle.colors(for: task.status).foreground
     }
 
     private var iconName: String {
         showsPendingUploadIcon ? "icloud.and.arrow.up.fill" : "checklist"
     }
 
-    static func subtitle(for task: QualityTaskListItemDto, showsPendingUploadIcon: Bool = false) -> String? {
+    static func subtitle(
+        for task: QualityTaskListItemDto,
+        showsPendingUploadIcon: Bool = false,
+        showsExecutor: Bool = true
+    ) -> String? {
         if showsPendingUploadIcon { return "已建立，待網路恢復後上傳" }
         var parts: [String] = []
-        if let executor = task.executor?.name, !executor.isEmpty { parts.append("執行：\(executor)") }
-        if let room = task.room?.name, !room.isEmpty { parts.append(room) }
+        if showsExecutor, let executor = task.executor?.name, !executor.isEmpty {
+            parts.append("執行：\(executor)")
+        }
         if let group = task.group?.name, !group.isEmpty { parts.append(group) }
+        if let room = task.room?.name, !room.isEmpty { parts.append(room) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }

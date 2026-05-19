@@ -13,7 +13,7 @@ enum AppConfiguration: Sendable {
     /// Release／TestFlight／App Store 預設；正式上架前請改為實際正式網址。
     private nonisolated static let productionAPIRootURLString = "https://api.example.com/api"
 
-    /// DEBUG 預設本機；實機請改此常數，或於 Xcode Scheme 設定 `API_BASE_URL`（建議區網 IP）。
+        /// DEBUG 預設本機；實機請改此常數，或於 Xcode Scheme 設定 `API_BASE_URL`（建議區網 IP）。
     private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.71:3000/api"
 
     /// 1. 環境變數 `API_BASE_URL`（完整 root，須含 `/api`）  

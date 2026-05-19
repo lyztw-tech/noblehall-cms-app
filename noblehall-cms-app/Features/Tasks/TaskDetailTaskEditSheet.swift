@@ -93,7 +93,7 @@ struct TaskDetailTaskEditSheet: View {
                 if assignmentFieldsOnly {
                     Section {
                         Text(
-                            "任務建立已超過三天，僅能修改審查人；執行對象請至網頁工作台調整。其他欄位已鎖定。"
+                            "任務建立已超過三天，僅能修改審查人；執行對象請至網頁任務管理調整。其他欄位已鎖定。"
                         )
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -151,7 +151,7 @@ struct TaskDetailTaskEditSheet: View {
                     Section {
                         Text(
                             assignmentFieldsOnly
-                                ? "快取中尚無專案成員，無法變更審查人。請稍後再試或至網頁工作台處理。"
+                                ? "快取中尚無專案成員，無法變更審查人。請稍後再試或至網頁任務管理處理。"
                                 : "快取中尚無可選的類別或專案成員，無法在此變更審查人或類別。"
                         )
                         .font(.footnote)
@@ -290,7 +290,7 @@ struct TaskDetailTaskEditSheet: View {
             )
             await onSaved()
         } catch {
-            saveError = error.localizedDescription
+            saveError = error.userFacingMessage
         }
     }
 }

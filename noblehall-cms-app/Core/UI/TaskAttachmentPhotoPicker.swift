@@ -234,7 +234,7 @@ struct TaskAttachmentPhotoPickerSection: View {
             let picked = try PhotoUploadProcessing.pickedPhoto(from: image, filenamePrefix: filenamePrefix)
             photos.append(picked)
         } catch {
-            onError?(error.localizedDescription)
+            onError?(error.userFacingMessage)
         }
     }
 
@@ -253,7 +253,7 @@ struct TaskAttachmentPhotoPickerSection: View {
                 let picked = try await PhotoUploadProcessing.pickedPhoto(from: item, filenamePrefix: filenamePrefix)
                 next.append(picked)
             } catch {
-                onError?(error.localizedDescription)
+                onError?(error.userFacingMessage)
             }
         }
         await MainActor.run { photos = next }

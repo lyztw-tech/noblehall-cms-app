@@ -1,6 +1,6 @@
 import Foundation
 
-/// 與 Web `QualityWorkbenchDetailView` / `quality-task-edit-window.ts` 對齊的任務編輯資格。
+/// 與 Web 任務管理詳情（`QualityTaskManagementDetailView`）/ `quality-task-edit-window.ts` 對齊的任務編輯資格。
 enum QualityTaskEditEligibility {
     /// 建立後可編輯「完整」基本資料的天數（逾此僅能改審查人等指派欄位）。
     static let basicInfoFullEditWindowDays = 3
@@ -12,7 +12,7 @@ enum QualityTaskEditEligibility {
             .replacingOccurrences(of: "-", with: "_")
     }
 
-    /// 與 Web `allowWorkbenchBasicInfoEdit`：進入審核／負責人確認／已完成後不可再編輯基本資料。
+    /// 與 Web 任務管理詳情 `allowWorkbenchBasicInfoEdit`：進入審核／負責人確認／已完成後不可再編輯基本資料。
     static func allowsBasicInfoEdit(task: QualityTaskDto) -> Bool {
         let s = normalizedStatus(task.status)
         switch s {

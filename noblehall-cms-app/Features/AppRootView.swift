@@ -100,6 +100,7 @@ struct NobleHallStatusPill: View {
     let title: String
     var systemImage: String? = nil
     var tint: Color = NobleHallTheme.brandGold
+    var background: Color? = nil
 
     var body: some View {
         HStack(spacing: 5) {
@@ -110,7 +111,7 @@ struct NobleHallStatusPill: View {
         .foregroundStyle(tint)
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .background(tint.opacity(0.12), in: Capsule())
+        .background((background ?? tint.opacity(0.12)), in: Capsule())
     }
 }
 
@@ -211,7 +212,10 @@ extension View {
 struct AppRootView: View {
     @Environment(SessionStore.self) private var session
     @Environment(NetworkPathMonitor.self) private var network
+    @Environment(NotificationInboxStore.self) private var notificationInbox
+    @Environment(NotificationNavigationCoordinator.self) private var notificationNav
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -219,16 +223,47 @@ struct AppRootView: View {
                 LoginView()
             } else if session.selectedProjectCode == nil {
                 ProjectListView()
+                    .task { await notificationInbox.syncFromServer() }
             } else if let code = session.selectedProjectCode {
                 MainTabView(projectCode: code)
             }
         }
         .tint(NobleHallTheme.brandGold)
+        .fullScreenCover(item: taskDetailBinding) { presentation in
+            TaskDetailView(
+                projectCode: presentation.projectCode,
+                taskId: presentation.taskId,
+                qualityDrawingIdHint: presentation.qualityDrawingId,
+                onClose: { notificationNav.clear() }
+            )
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nobleHallNotificationDeepLink)) { note in
+            guard let link = note.userInfo?["link"] as? String,
+                  let deepLink = notificationInbox.handleDeepLinkString(link)
+            else { return }
+            openNotificationDeepLink(deepLink)
+        }
         .dismissKeyboardOnTapOutside()
         .animation(.easeInOut(duration: 0.2), value: session.isLoggedIn)
         .animation(.easeInOut(duration: 0.2), value: session.selectedProjectCode)
         .task(id: bootstrapTaskKey) {
             await bootstrapSessionAndPreload()
+            syncNotificationInboxLifecycle()
+        }
+        .onChange(of: session.isLoggedIn) { _, loggedIn in
+            if !loggedIn {
+                notificationInbox.stop()
+            } else {
+                notificationInbox.startIfLoggedIn()
+            }
+        }
+        .onChange(of: session.spaceId) { _, _ in
+            guard session.isLoggedIn else { return }
+            notificationInbox.startIfLoggedIn()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active, session.isLoggedIn else { return }
+            notificationInbox.startIfLoggedIn()
         }
         .task {
             await NetworkReconnectNotifier.requestAuthorizationIfNotDetermined()
@@ -243,12 +278,39 @@ struct AppRootView: View {
             }
             if isConnected {
                 Task { await bootstrapSessionAndPreload() }
+                if session.isLoggedIn {
+                    notificationInbox.startIfLoggedIn()
+                }
             }
         }
     }
 
     private var bootstrapTaskKey: String {
         "\(session.isLoggedIn)|\(session.selectedProjectCode ?? "")|\(session.spaceId ?? "")|\(network.isConnected)"
+    }
+
+    private var taskDetailBinding: Binding<NotificationNavigationCoordinator.TaskDetailPresentation?> {
+        Binding(
+            get: { notificationNav.taskDetail },
+            set: { notificationNav.taskDetail = $0 }
+        )
+    }
+
+    private func syncNotificationInboxLifecycle() {
+        notificationInbox.bind(session: session)
+        if session.isLoggedIn {
+            notificationInbox.startIfLoggedIn()
+        } else {
+            notificationInbox.stop()
+            notificationNav.clear()
+        }
+    }
+
+    private func openNotificationDeepLink(_ deepLink: NotificationDeepLink) {
+        if session.selectedProjectCode != deepLink.projectCode {
+            session.setSelectedProject(code: deepLink.projectCode)
+        }
+        notificationNav.open(deepLink: deepLink, currentProjectCode: deepLink.projectCode)
     }
 
     /// 先還原登入（Cookie），再預載平面圖；避免預載搶跑導致圖檔下載失敗、僅有座標點。

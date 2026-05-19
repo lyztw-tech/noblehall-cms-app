@@ -211,7 +211,7 @@ struct TaskManagementFilterRootView: View {
             }
             await reloadGroupAndRoomOptions()
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
         }
     }
 

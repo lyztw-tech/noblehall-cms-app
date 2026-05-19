@@ -6,7 +6,7 @@ struct TaskManagementFilterOption: Identifiable, Hashable, Sendable {
     let label: String
 }
 
-/// 任務管理進階篩選（對齊 Web 工作台總表 `advancedFilter`）。
+/// 任務管理進階篩選（對齊 Web 任務管理總表 `advancedFilter`）。
 @Observable
 final class TaskManagementFilterStore {
     var revision = 0

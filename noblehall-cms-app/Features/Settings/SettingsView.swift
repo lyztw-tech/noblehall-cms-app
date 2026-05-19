@@ -163,7 +163,7 @@ struct SettingsView: View {
             try CacheMaintenance.purgeOfflineDataForProject(projectCode: projectCode, modelContext: modelContext)
             await refreshCacheStats()
         } catch {
-            cacheMaintenanceError = error.localizedDescription
+            cacheMaintenanceError = error.userFacingMessage
         }
     }
 

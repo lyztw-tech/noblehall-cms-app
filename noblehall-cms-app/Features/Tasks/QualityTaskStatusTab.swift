@@ -4,6 +4,7 @@ import Foundation
 enum QualityTaskStatusTab: String, CaseIterable, Identifiable, Hashable {
     case pendingAssignment = "待指派"
     case inProgress = "執行中"
+    /// 含 `director_check`（負責人確認）與 `in_review`（審查中）。
     case inReview = "待審核"
 
     var id: String { rawValue }
@@ -20,7 +21,11 @@ enum QualityTaskStatusTab: String, CaseIterable, Identifiable, Hashable {
         case .inProgress:
             return normalized == "in_progress" || normalized == "執行中" || normalized == "進行中"
         case .inReview:
-            return normalized == "in_review" || normalized == "待審核" || normalized == "審查中"
+            return normalized == "in_review"
+                || normalized == "director_check"
+                || normalized == "待審核"
+                || normalized == "審查中"
+                || normalized == "負責人確認"
         }
     }
 }

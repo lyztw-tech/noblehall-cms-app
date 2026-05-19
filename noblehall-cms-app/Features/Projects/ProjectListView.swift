@@ -120,7 +120,7 @@ struct ProjectListView: View {
             try LocalTaskCache.upsertProjects(res.data, context: modelContext)
             try modelContext.save()
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
             if let cached = try? LocalTaskCache.cachedProjects(context: modelContext) {
                 projects = cached.map {
                     ProjectListItemDto(projectId: nil, name: $0.name, code: $0.code, status: $0.status, address: nil)

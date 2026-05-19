@@ -45,8 +45,17 @@ struct TaskManagementRootView: View {
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
                     ForEach(TaskManagementListMode.allCases) { mode in
-                        Button(mode.rawValue) {
+                        Button {
                             listMode = mode
+                        } label: {
+                            HStack {
+                                Text(mode.menuTitle)
+                                Spacer(minLength: 8)
+                                if listMode == mode {
+                                    Image(systemName: "checkmark")
+                                        .font(.subheadline.weight(.semibold))
+                                }
+                            }
                         }
                     }
                 } label: {
@@ -204,7 +213,7 @@ struct TaskManagementAllTasksView: View {
                 filter: filterStore
             )
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
         }
     }
 
@@ -313,7 +322,7 @@ struct TaskManagementFloorPlanListView: View {
         do {
             drawings = try await QualityTaskAPI.allQualityDrawings(projectCode: projectCode, spaceId: sid)
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
         }
     }
 }
@@ -522,9 +531,12 @@ struct TaskManagementStatusTaskListView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
+                .background(NobleHallTheme.warmBackground)
                 .dismissKeyboardOnScroll()
             }
         }
+        .nobleHallScreen()
         .navigationTitle(route.filter.title)
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
@@ -573,7 +585,7 @@ struct TaskManagementStatusTaskListView: View {
             )
             tasks.sort { ($0.name ?? "") < ($1.name ?? "") }
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
         }
     }
 }

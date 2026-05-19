@@ -13,13 +13,20 @@ struct noblehall_cms_appApp: App {
 
     @State private var sessionStore = SessionStore()
     @State private var networkMonitor = NetworkPathMonitor()
+    @State private var notificationInbox = NotificationInboxStore()
+    @State private var notificationNav = NotificationNavigationCoordinator()
 
     var body: some Scene {
         WindowGroup {
             AppRootView()
                 .environment(sessionStore)
                 .environment(networkMonitor)
+                .environment(notificationInbox)
+                .environment(notificationNav)
                 .modelContainer(AppModelContainer.shared)
+                .onAppear {
+                    notificationInbox.bind(session: sessionStore)
+                }
         }
     }
 }

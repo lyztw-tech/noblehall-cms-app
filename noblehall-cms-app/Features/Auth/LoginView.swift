@@ -19,7 +19,6 @@ struct LoginView: View {
             }
             .nobleHallScreen()
             .dismissKeyboardOnScroll()
-            .keyboardDoneToolbar()
             .toolbar(.hidden, for: .navigationBar)
         }
         .dismissKeyboardOnTapOutside()
@@ -133,7 +132,7 @@ struct LoginView: View {
                     }
                 }
             } catch {
-                errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                errorMessage = error.userFacingMessage
             }
         }
     }

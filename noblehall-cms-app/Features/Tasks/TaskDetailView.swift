@@ -368,7 +368,7 @@ struct TaskDetailView: View {
         return false
     }
 
-    /// 無法開啟「編輯」時的原因（與 Web 工作台一致）。
+    /// 無法開啟「編輯」時的原因（與 Web 任務管理一致）。
     private var taskEditBlockedReason: String? {
         guard let t = detail?.task else { return "尚未載入任務資料。" }
         return QualityTaskEditEligibility.taskEditSheetBlockedReason(
@@ -384,7 +384,7 @@ struct TaskDetailView: View {
         guard let t = detail?.task else { return nil }
         guard taskEditBlockedReason == nil else { return nil }
         guard QualityTaskEditEligibility.nonAssignmentFieldsLocked(task: t) else { return nil }
-        return "任務建立已超過三天，僅能修改審查人；執行對象請至網頁工作台調整。"
+        return "任務建立已超過三天，僅能修改審查人；執行對象請至網頁任務管理調整。"
     }
 
     private static func executorLabel(for task: QualityTaskDto) -> String {
@@ -885,7 +885,7 @@ struct TaskDetailView: View {
             await loadAll()
             refreshPendingExecutions()
         } catch {
-            executionEditError = error.localizedDescription
+            executionEditError = error.userFacingMessage
         }
     }
 
@@ -909,7 +909,7 @@ struct TaskDetailView: View {
             await loadAll()
             refreshPendingExecutions()
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
         }
     }
 
@@ -940,7 +940,7 @@ struct TaskDetailView: View {
                 }
             }
         } catch {
-            loadError = error.localizedDescription
+            loadError = error.userFacingMessage
             detail = try? LocalTaskCache.loadDetail(projectCode: projectCode, taskId: taskId, context: modelContext)
             await loadPlanForTask(task: detail?.task, spaceId: sid, preferNetwork: false)
         }
@@ -1005,7 +1005,7 @@ struct TaskDetailView: View {
             }
         } catch {
             if offlineFloorImage == nil {
-                floorPlanError = error.localizedDescription
+                floorPlanError = error.userFacingMessage
             }
         }
     }
@@ -1103,7 +1103,7 @@ struct TaskDetailView: View {
                 refreshPendingExecutions()
                 return true
             } catch {
-                loadError = error.localizedDescription
+                loadError = error.userFacingMessage
                 return false
             }
         } else {
@@ -1123,7 +1123,7 @@ struct TaskDetailView: View {
                 refreshPendingExecutions()
                 return true
             } catch {
-                loadError = error.localizedDescription
+                loadError = error.userFacingMessage
                 return false
             }
         }
@@ -1230,30 +1230,11 @@ private struct QualityTaskFloorPlanZoomPanView: View {
     @ViewBuilder
     private func taskSpaceMarkerBadge(marker: TaskSpaceMarker) -> some View {
         let hasIncomplete = marker.incompleteTaskCount > 0
-        let borderColor: Color = hasIncomplete ? .red : .green
-        let countTextColor: Color = hasIncomplete ? .red : .green
-
-        ZStack(alignment: .center) {
-            Circle()
-                .fill(.white)
-                .frame(width: 38, height: 38)
-                .overlay(
-                    Circle()
-                        .stroke(borderColor, lineWidth: 3)
-                )
-                .shadow(color: .black.opacity(0.25), radius: 3, y: 2)
-
-            if marker.taskCount > 0 {
-                Text(String(marker.taskCount))
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(countTextColor)
-            } else {
-                Image(systemName: "mappin.circle.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(borderColor)
-                    .symbolRenderingMode(.hierarchical)
-            }
-        }
+        QualityPlanPointMarker.badge(
+            count: marker.taskCount,
+            incomplete: hasIncomplete,
+            selected: false
+        )
     }
 
     /// 將後端／Web 畫布座標換算為在 `fitted` 內的 0…1 比例（相對於顯示用 `image.size`）。
@@ -1558,7 +1539,7 @@ private struct SpaceAuthenticatedImageView: View {
                 }
                 lastError = "已下載圖檔但無法顯示（可能為不支援的格式）。"
             } catch {
-                lastError = error.localizedDescription
+                lastError = error.userFacingMessage
             }
         }
 

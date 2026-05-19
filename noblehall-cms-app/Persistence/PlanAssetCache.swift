@@ -85,7 +85,7 @@ enum PlanAssetCache {
                 store.finish(error: nil)
             }
         } catch {
-            store.finish(error: error.localizedDescription)
+            store.finish(error: error.userFacingMessage)
         }
     }
 

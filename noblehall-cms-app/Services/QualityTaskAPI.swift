@@ -1,7 +1,7 @@
 import Foundation
 
 enum QualityTaskAPI: Sendable {
-    /// `executorId` 為 `nil` 時與 Web 工作台「總表」相同：列出專案內可見之全部品質任務。  
+    /// `executorId` 為 `nil` 時與 Web 任務管理「總表」相同：列出專案內可見之全部品質任務。  
     /// 有值時僅篩 `quality_task.executor_id` 等於該 UUID（**不含**「執行對象為群組」的任務，因 DB 存的是群組 id）。
     static func listProjectTasks(
         projectCode: String,
