@@ -10,15 +10,15 @@ import Foundation
 
 /// API root（含路徑 **`/api`**），所有 `APIClient` 請求皆相對於此。
 enum AppConfiguration: Sendable {
-    /// Release／TestFlight／App Store 預設；正式上架前請改為實際正式網址。
-    private nonisolated static let productionAPIRootURLString = "https://api.example.com/api"
-
-        /// DEBUG 預設本機；實機請改此常數，或於 Xcode Scheme 設定 `API_BASE_URL`（建議區網 IP）。
+    /// DEBUG fallback；主要環境請從 Xcode `.xcconfig` 的 `API_BASE_URL` 注入。
     private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.71:3000/api"
 
-    /// 1. 環境變數 `API_BASE_URL`（完整 root，須含 `/api`）  
-    /// 2. DEBUG 且 `FORCE_PRODUCTION_API=1` → 使用 Release 預設字串  
-    /// 3. 否則依 `#if DEBUG` 選 Debug／Release 預設
+    /// Release fallback；正式上架前請改為實際正式網址，或使用 Production.xcconfig 注入。
+    private nonisolated static let productionAPIRootURLString = "https://api.example.com/api"
+
+    /// 1. Scheme 環境變數 `API_BASE_URL`（方便臨時覆蓋）
+    /// 2. Info.plist `API_BASE_URL`（由 `.xcconfig` 注入，正式管理方式）
+    /// 3. 依 Debug／Release fallback
     nonisolated static var apiRootURL: URL {
         if let raw = ProcessInfo.processInfo.environment["API_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !raw.isEmpty,
@@ -26,14 +26,27 @@ enum AppConfiguration: Sendable {
         {
             return url
         }
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["FORCE_PRODUCTION_API"] == "1" {
-            return URL(string: productionAPIRootURLString)!
+        if let raw = bundledString(forInfoKey: "API_BASE_URL"),
+           let url = URL(string: raw)
+        {
+            return url
         }
+        #if DEBUG
         return URL(string: debugDefaultAPIRootURLString)!
         #else
         return URL(string: productionAPIRootURLString)!
         #endif
+    }
+
+    /// 目前 build 環境名稱（由 `.xcconfig` 注入）。
+    nonisolated static var environmentName: String {
+        bundledString(forInfoKey: "NOBLEHALL_ENVIRONMENT") ?? {
+            #if DEBUG
+            return "Debug"
+            #else
+            return "Release"
+            #endif
+        }()
     }
 
     /// 不含 path 的 origin（例 `http://127.0.0.1:3000`），用於組 `/api/files/...` 等絕對 URL。
@@ -55,13 +68,17 @@ enum AppConfiguration: Sendable {
             if let p = u.port { return "\(h):\(p)" }
             return h
         }()
-        #if DEBUG
-        let mode = ProcessInfo.processInfo.environment["FORCE_PRODUCTION_API"] == "1" ? "Debug→正式預設" : "Debug"
-        #else
-        let mode = "Release"
-        #endif
         let path = u.path.isEmpty ? "" : u.path
-        return "\(mode) · \(u.scheme ?? "?")://\(authority)\(path)"
+        return "\(environmentName) · \(u.scheme ?? "?")://\(authority)\(path)"
+    }
+
+    private nonisolated static func bundledString(forInfoKey key: String) -> String? {
+        guard let raw = Bundle(for: AppBundleAnchor.self).object(forInfoDictionaryKey: key) as? String else {
+            return nil
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("$(") else { return nil }
+        return trimmed
     }
 
     private nonisolated static func isLocalhostAPIHost(_ url: URL) -> Bool {
