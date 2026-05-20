@@ -27,8 +27,23 @@ struct NotificationDeepLink: Sendable, Equatable {
         let path = question.map { String(pathAndQuery[..<$0]) } ?? pathAndQuery
         let query = question.map { String(pathAndQuery[pathAndQuery.index(after: $0)...]) } ?? ""
 
-        // /projects/:projectCode/quality/drawings/:qualityDrawingId
+        // /projects/:projectCode/quality/task-management/:taskId
         let segments = path.split(separator: "/").map(String.init)
+        if segments.count >= 5,
+           segments[0] == "projects",
+           segments[2] == "quality",
+           segments[3] == "task-management" {
+            let projectCode = segments[1]
+            let taskId = segments[4].removingPercentEncoding ?? segments[4]
+            guard !taskId.isEmpty else { return nil }
+            return NotificationDeepLink(
+                projectCode: projectCode,
+                qualityDrawingId: nil,
+                openTaskId: taskId
+            )
+        }
+
+        // /projects/:projectCode/quality/drawings/:qualityDrawingId?openTaskId=:taskId
         guard segments.count >= 5,
               segments[0] == "projects",
               segments[2] == "quality",
@@ -59,4 +74,7 @@ struct NotificationDeepLink: Sendable, Equatable {
 extension Notification.Name {
     /// `userInfo["link"]` 為通知深連結字串。
     static let nobleHallNotificationDeepLink = Notification.Name("nobleHall.notification.deepLink")
+    static let nobleHallRemoteNotificationReceived = Notification.Name("NobleHall.remoteNotification.received")
+    static let nobleHallRemoteNotificationTokenUpdated = Notification.Name("NobleHall.remoteNotification.tokenUpdated")
+    static let nobleHallRemoteNotificationTokenFailed = Notification.Name("NobleHall.remoteNotification.tokenFailed")
 }

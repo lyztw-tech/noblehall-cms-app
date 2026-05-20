@@ -33,4 +33,45 @@ final class NoblehallAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
         }
         completionHandler()
     }
+
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        print("[APNs] didRegister tokenPrefix=\(token.prefix(12)) length=\(token.count)")
+        NotificationCenter.default.post(
+            name: .nobleHallRemoteNotificationTokenUpdated,
+            object: nil,
+            userInfo: ["token": token]
+        )
+    }
+
+    func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        print("[APNs] didFailToRegister error=\(error.localizedDescription)")
+        NotificationCenter.default.post(
+            name: .nobleHallRemoteNotificationTokenFailed,
+            object: nil,
+            userInfo: ["error": error]
+        )
+    }
+
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        if let link = NotificationLocalPush.link(from: userInfo) {
+            NotificationCenter.default.post(
+                name: .nobleHallNotificationDeepLink,
+                object: nil,
+                userInfo: ["link": link]
+            )
+        }
+        NotificationCenter.default.post(name: .nobleHallRemoteNotificationReceived, object: nil)
+        completionHandler(.newData)
+    }
 }

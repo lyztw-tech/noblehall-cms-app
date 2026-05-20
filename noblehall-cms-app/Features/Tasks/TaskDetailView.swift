@@ -25,6 +25,7 @@ struct TaskDetailView: View {
     /// 列表帶入的圖面 id（詳情 API 缺欄位或離線僅有列表快取時仍可載入平面圖）。
     var qualityDrawingIdHint: String? = nil
     let onClose: () -> Void
+    var onTaskChanged: (() async -> Void)? = nil
 
     @Environment(SessionStore.self) private var session
     @Environment(NetworkPathMonitor.self) private var network
@@ -49,18 +50,201 @@ struct TaskDetailView: View {
     @State private var isLoading = true
     @State private var pendingExecutions: [PendingExecutionOutbox] = []
     @State private var executionSaveNotice: String?
+    @State private var executionSaveNoticeID: UUID?
     @State private var editingLedgerExecution: TaskLedgerEntryDto?
     @State private var executionEditDraftText = ""
     @State private var executionEditPickedPhotos: [PickedUploadPhoto] = []
     @State private var executionEditError: String?
+    @State private var viewingLedgerEntry: TaskLedgerEntryDto?
     @State private var isSavingExecutionEdit = false
     @State private var showDeleteExecutionConfirm = false
     @State private var pendingDeleteLedgerEntry: TaskLedgerEntryDto?
+    @State private var reviewDraft: ReviewActionDraft?
+    @State private var reviewCommentText = ""
+    @State private var reviewPickedPhotos: [PickedUploadPhoto] = []
+    @State private var reviewSubmitError: String?
+    @State private var isSubmittingReview = false
+    @State private var showCompleteSubmitConfirm = false
+    @State private var isSubmittingExecution = false
 
     enum BottomTab: String, CaseIterable, Identifiable {
         case task = "任務資料"
         case records = "執行紀錄"
         var id: String { rawValue }
+    }
+
+    private enum ReviewKind: String, Identifiable {
+        case director
+        case reviewer
+
+        var id: String { rawValue }
+
+        var commentLabel: String {
+            switch self {
+            case .director: return "負責人意見"
+            case .reviewer: return "審核意見"
+            }
+        }
+
+        var approvedTitle: String {
+            switch self {
+            case .director: return "負責人通過"
+            case .reviewer: return "審查通過"
+            }
+        }
+
+        var rejectedTitle: String {
+            switch self {
+            case .director: return "退回重做"
+            case .reviewer: return "退回審核"
+            }
+        }
+    }
+
+    private struct ReviewActionDraft: Identifiable {
+        let kind: ReviewKind
+        let result: QualityTaskReviewResult
+
+        var id: String { "\(kind.rawValue)-\(result.rawValue)" }
+
+        var title: String {
+            result == .approved ? kind.approvedTitle : kind.rejectedTitle
+        }
+    }
+
+    private struct ReviewActionSheet: View {
+        let draft: ReviewActionDraft
+        @Binding var comment: String
+        @Binding var photos: [PickedUploadPhoto]
+        let errorMessage: String?
+        let isSubmitting: Bool
+        let onCancel: () -> Void
+        let onSubmit: () -> Void
+
+        var body: some View {
+            NavigationStack {
+                Form {
+                    Section {
+                        TextField("\(draft.kind.commentLabel)（選填）", text: $comment, axis: .vertical)
+                            .lineLimit(4 ... 12)
+                        Text("\(comment.count)/2000")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(comment.count > 2000 ? .red : .secondary)
+                    } header: {
+                        Text(draft.kind.commentLabel)
+                    } footer: {
+                        Text(draft.result == .approved ? "通過後會進入下一階段或完成任務。" : "退回後任務會回到執行人待處理。")
+                    }
+
+                    Section {
+                        TaskAttachmentPhotoPickerSection(
+                            photos: $photos,
+                            maxCount: maxExecutionAttachmentsPerEntry,
+                            filenamePrefix: draft.kind == .director ? "director-review" : "review",
+                            isDisabled: isSubmitting,
+                            caption: "可補充現場照片或截圖，最多 \(maxExecutionAttachmentsPerEntry) 張。",
+                            onError: { _ in }
+                        )
+                    } header: {
+                        Text("附件")
+                    }
+
+                    if let errorMessage, !errorMessage.isEmpty {
+                        Section {
+                            Text(errorMessage)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+                .nobleHallFormStyle()
+                .navigationTitle(draft.title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消", action: onCancel)
+                            .disabled(isSubmitting)
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button {
+                            onSubmit()
+                        } label: {
+                            if isSubmitting {
+                                ProgressView()
+                            } else {
+                                Text(draft.result == .approved ? "通過" : "退回")
+                            }
+                        }
+                        .disabled(isSubmitting || comment.count > 2000)
+                    }
+                }
+            }
+        }
+    }
+
+    private struct LedgerEntryDetailSheet: View {
+        let entry: TaskLedgerEntryDto
+        let spaceId: String?
+        let onClose: () -> Void
+
+        var body: some View {
+            NavigationStack {
+                List {
+                    Section("紀錄") {
+                        LabeledContent("類型", value: TaskLedgerPresentation.kindLabel(entry.kind))
+                        if let round = entry.round {
+                            LabeledContent("輪次", value: "第 \(round) 輪")
+                        }
+                        LabeledContent("人員", value: entry.actor.displayName ?? entry.actor.username ?? entry.actor.id)
+                        LabeledContent("時間", value: AppDateTimeFormat.fullDateTime(entry.occurredAt))
+                        if let result = entry.result, !result.isEmpty {
+                            LabeledContent("結果", value: reviewResultLabel(result))
+                        }
+                    }
+
+                    if let body = entry.body, !body.isEmpty {
+                        Section("內容") {
+                            Text(body)
+                                .font(.body)
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    if let attachments = entry.attachments, !attachments.isEmpty {
+                        Section("附件") {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 10) {
+                                    ForEach(attachments) { attachment in
+                                        ExecutionAttachmentThumbnail(attachment: attachment, spaceId: spaceId)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 0))
+                        }
+                    }
+                }
+                .nobleHallGroupedListStyle()
+                .navigationTitle("查看紀錄")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("完成", action: onClose)
+                    }
+                }
+            }
+        }
+
+        private func reviewResultLabel(_ raw: String) -> String {
+            switch raw.lowercased() {
+            case "approved":
+                return "通過"
+            case "rejected":
+                return "退回"
+            default:
+                return QualityTaskStatusLabels.displayName(for: raw)
+            }
+        }
     }
 
     var body: some View {
@@ -226,6 +410,7 @@ struct TaskDetailView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
+            .nobleHallScreen()
             .navigationTitle("任務")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -282,6 +467,29 @@ struct TaskDetailView: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $reviewDraft) { draft in
+            ReviewActionSheet(
+                draft: draft,
+                comment: $reviewCommentText,
+                photos: $reviewPickedPhotos,
+                errorMessage: reviewSubmitError,
+                isSubmitting: isSubmittingReview,
+                onCancel: {
+                    guard !isSubmittingReview else { return }
+                    clearReviewDraft()
+                },
+                onSubmit: {
+                    Task { await submitReviewAction(draft: draft) }
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .onAppear {
+                reviewCommentText = ""
+                reviewPickedPhotos = []
+                reviewSubmitError = nil
+            }
         }
     }
 
@@ -430,7 +638,7 @@ struct TaskDetailView: View {
                         fallbackExecutionCard(ex: ex, task: task)
                     }
                 }
-                addExecutionCardButton
+                executionStageActionArea
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -482,6 +690,7 @@ struct TaskDetailView: View {
                         }
                     }
                 }
+                .nobleHallFormStyle()
                 .navigationTitle("編輯執行紀錄")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -506,6 +715,13 @@ struct TaskDetailView: View {
             }
             .presentationDetents([.medium, .large])
         }
+        .fullScreenCover(item: $viewingLedgerEntry) { entry in
+            LedgerEntryDetailSheet(
+                entry: entry,
+                spaceId: session.spaceId,
+                onClose: { viewingLedgerEntry = nil }
+            )
+        }
         .confirmationDialog("刪除此筆執行紀錄？", isPresented: $showDeleteExecutionConfirm, titleVisibility: .visible) {
             Button("刪除", role: .destructive) {
                 let entry = pendingDeleteLedgerEntry
@@ -520,19 +736,216 @@ struct TaskDetailView: View {
         } message: {
             Text("此動作無法復原。僅未送出、任務進行中、日曆三天內且由您建立的執行紀錄可刪除。")
         }
+        .confirmationDialog("完成提交？", isPresented: $showCompleteSubmitConfirm, titleVisibility: .visible) {
+            Button("送出") {
+                Task { await submitCurrentExecutionsForReview() }
+            }
+            .disabled(isSubmittingExecution)
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(completeSubmitConfirmMessage)
+        }
+    }
+
+    @ViewBuilder
+    private var executionStageActionArea: some View {
+        if let kind = availableReviewKind {
+            reviewActionButtons(kind: kind)
+        } else if isTaskInReviewStage {
+            executionNoticeCard(
+                title: "已進入審核階段",
+                message: reviewStageReadOnlyMessage,
+                systemImage: "lock.fill",
+                tint: .secondary
+            )
+        } else if canCreateExecutionForCurrentTask {
+            addExecutionCardButton
+            if showCompleteSubmitEntry {
+                completeSubmitButton
+            }
+        }
+    }
+
+    private var isTaskInReviewStage: Bool {
+        guard let task = detail?.task else { return false }
+        let status = QualityTaskEditEligibility.normalizedStatus(task.status)
+        return status == "director_check" || status == "in_review"
+    }
+
+    private var canCreateExecutionForCurrentTask: Bool {
+        guard let task = detail?.task else { return false }
+        let status = QualityTaskEditEligibility.normalizedStatus(task.status)
+        return status == "in_progress" || status == "rejected"
+    }
+
+    private var currentRoundExecutionCount: Int {
+        if let list = detail?.latestSubmission?.executions {
+            return list.count
+        }
+        if let ledger = detail?.ledger {
+            return ledger.filter { $0.kind == .execution && $0.submissionId == nil }.count
+        }
+        return 0
+    }
+
+    private var isCurrentUserTaskExecutor: Bool {
+        guard let task = detail?.task,
+              QualityTaskEditEligibility.normalizedStatus(task.status) == "in_progress",
+              task.executorType?.lowercased() == "user",
+              let uid = session.currentUser?.id,
+              !uid.isEmpty
+        else {
+            return false
+        }
+        return task.executor?.id == uid || task.executorId == uid
+    }
+
+    private var showCompleteSubmitEntry: Bool {
+        guard network.isConnected,
+              isCurrentUserTaskExecutor,
+              currentRoundExecutionCount > 0,
+              let task = detail?.task,
+              let qdid = resolvedQualityDrawingId(for: task),
+              !qdid.isEmpty
+        else {
+            return false
+        }
+        return true
+    }
+
+    private var completeSubmitConfirmMessage: String {
+        let count = currentRoundExecutionCount
+        let recordText = count > 0 ? "將送出 \(count) 筆已保存的執行紀錄。" : "尚無可送出的執行紀錄。"
+        return "確定要完成提交嗎？\n\n\(recordText)\n送出後將進入審核階段，無法再新增執行紀錄。"
+    }
+
+    private var reviewStageReadOnlyMessage: String {
+        guard network.isConnected else { return "離線時無法審核；此階段也不能新增執行紀錄。" }
+        guard detail?.latestSubmission?.id?.isEmpty == false else {
+            return "尚未取得提交資料，無法審核；此階段也不能新增執行紀錄。"
+        }
+        return "此階段不能新增執行紀錄。若您是審核人或專案負責人，請確認帳號權限後操作。"
+    }
+
+    private var availableReviewKind: ReviewKind? {
+        guard network.isConnected,
+              let task = detail?.task,
+              let submissionId = detail?.latestSubmission?.id,
+              !submissionId.isEmpty,
+              let qdid = resolvedQualityDrawingId(for: task),
+              !qdid.isEmpty
+        else {
+            return nil
+        }
+
+        let status = QualityTaskEditEligibility.normalizedStatus(task.status)
+        let currentUserId = session.currentUser?.id
+        if status == "director_check", detail?.viewer?.isProjectOwner == true {
+            return .director
+        }
+        if status == "in_review",
+           let currentUserId,
+           !currentUserId.isEmpty,
+           task.reviewer?.id == currentUserId
+        {
+            return .reviewer
+        }
+        return nil
+    }
+
+    private func reviewActionButtons(kind: ReviewKind) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("此任務已進入\(kind == .director ? "負責人確認" : "審核")階段，不能再新增執行紀錄。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                Button {
+                    openReviewDraft(kind: kind, result: .rejected)
+                } label: {
+                    Label("退回", systemImage: "arrow.uturn.backward.circle.fill")
+                        .frame(maxWidth: .infinity)
+                        .font(.headline.weight(.semibold))
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .tint(.red)
+
+                Button {
+                    openReviewDraft(kind: kind, result: .approved)
+                } label: {
+                    Label("通過", systemImage: "checkmark.circle.fill")
+                        .frame(maxWidth: .infinity)
+                        .font(.headline.weight(.semibold))
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color(.separator).opacity(0.35), lineWidth: 0.5)
+        )
+    }
+
+    private var completeSubmitButton: some View {
+        Button {
+            showCompleteSubmitConfirm = true
+        } label: {
+            HStack(spacing: 10) {
+                if isSubmittingExecution {
+                    ProgressView()
+                } else {
+                    Image(systemName: "paperplane.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(NobleHallTheme.brandGold)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("完成提交")
+                        .font(.headline)
+                        .foregroundStyle(NobleHallTheme.ink)
+                    Text("送出 \(currentRoundExecutionCount) 筆執行紀錄進入審核")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(NobleHallTheme.brandGold.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(NobleHallTheme.brandGold.opacity(0.30), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isSubmittingExecution)
     }
 
     private var addExecutionCardButton: some View {
         Button {
             executionSaveNotice = nil
+            executionSaveNoticeID = nil
             showAddExecution = true
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "plus.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(NobleHallTheme.brandGold)
                 Text("新增執行紀錄")
                     .font(.headline)
+                    .foregroundStyle(NobleHallTheme.ink)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
@@ -542,11 +955,11 @@ struct TaskDetailView: View {
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.08))
+                    .fill(NobleHallTheme.brandGold.opacity(0.12))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 1)
+                    .strokeBorder(NobleHallTheme.brandGold.opacity(0.30), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -573,6 +986,20 @@ struct TaskDetailView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color(.separator).opacity(0.35), lineWidth: 0.5)
         )
+    }
+
+    private func showExecutionSaveNotice(_ message: String) {
+        let id = UUID()
+        executionSaveNotice = message
+        executionSaveNoticeID = id
+        Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await MainActor.run {
+                guard executionSaveNoticeID == id else { return }
+                executionSaveNotice = nil
+                executionSaveNoticeID = nil
+            }
+        }
     }
 
     private func pendingExecutionCard(pending: PendingExecutionOutbox) -> some View {
@@ -638,11 +1065,16 @@ struct TaskDetailView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                ledgerEntryCardBody(
-                    entry: entry,
-                    footnote: entry.kind == .execution ? hint : nil,
-                    showChevron: false
-                )
+                Button {
+                    viewingLedgerEntry = entry
+                } label: {
+                    ledgerEntryCardBody(
+                        entry: entry,
+                        footnote: entry.kind == .execution ? hint : nil,
+                        showChevron: true
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
         .contextMenu {
@@ -749,7 +1181,12 @@ struct TaskDetailView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                fallbackExecutionCardBody(ex: ex, footnote: hint, showChevron: false)
+                Button {
+                    viewingLedgerEntry = synthetic
+                } label: {
+                    fallbackExecutionCardBody(ex: ex, footnote: hint, showChevron: true)
+                }
+                .buttonStyle(.plain)
             }
         }
         .contextMenu {
@@ -871,7 +1308,7 @@ struct TaskDetailView: View {
                         spaceId: sid
                     )
                     if uploadResp.success == false {
-                        executionSaveNotice = uploadResp.message ?? "部分檔案上傳失敗"
+                        showExecutionSaveNotice(uploadResp.message ?? "部分檔案上傳失敗")
                         editingLedgerExecution = nil
                         executionEditPickedPhotos = []
                         await loadAll()
@@ -1099,6 +1536,7 @@ struct TaskDetailView: View {
                     loadError = w.map { "\($0.filename)：\($0.error)" }.joined(separator: "；")
                 }
                 executionSaveNotice = nil
+                executionSaveNoticeID = nil
                 await loadAll()
                 refreshPendingExecutions()
                 return true
@@ -1117,15 +1555,167 @@ struct TaskDetailView: View {
                     context: modelContext
                 )
                 loadError = nil
-                executionSaveNotice = attachments.isEmpty
-                    ? "已暫存執行說明，連線後將自動上傳。"
-                    : "已暫存執行說明與 \(attachments.count) 張照片，連線後將自動上傳。"
+                showExecutionSaveNotice(
+                    attachments.isEmpty
+                        ? "已暫存執行說明，連線後將自動上傳。"
+                        : "已暫存執行說明與 \(attachments.count) 張照片，連線後將自動上傳。"
+                )
                 refreshPendingExecutions()
                 return true
             } catch {
                 loadError = error.userFacingMessage
                 return false
             }
+        }
+    }
+
+    private func submitCurrentExecutionsForReview() async {
+        guard showCompleteSubmitEntry else {
+            loadError = "僅任務執行人可完成提交，且任務需為進行中並已有一筆以上執行紀錄。"
+            return
+        }
+        guard let sid = session.spaceId else {
+            loadError = "缺少 Space，無法送出執行紀錄。"
+            return
+        }
+        guard let task = detail?.task,
+              let qdid = resolvedQualityDrawingId(for: task),
+              !qdid.isEmpty
+        else {
+            loadError = "缺少平面圖資訊，無法送出執行紀錄。"
+            return
+        }
+
+        isSubmittingExecution = true
+        loadError = nil
+        defer { isSubmittingExecution = false }
+
+        do {
+            _ = try await QualityTaskAPI.submitExecution(
+                projectCode: projectCode,
+                qualityDrawingId: qdid,
+                taskId: taskId,
+                spaceId: sid
+            )
+            showExecutionSaveNotice("執行紀錄已送出，等待審核。")
+            await loadAll()
+            refreshPendingExecutions()
+            await notifyTaskChanged()
+        } catch {
+            loadError = error.userFacingMessage
+        }
+    }
+
+    private func openReviewDraft(kind: ReviewKind, result: QualityTaskReviewResult) {
+        reviewCommentText = ""
+        reviewPickedPhotos = []
+        reviewSubmitError = nil
+        reviewDraft = ReviewActionDraft(kind: kind, result: result)
+    }
+
+    private func clearReviewDraft() {
+        reviewDraft = nil
+        reviewCommentText = ""
+        reviewPickedPhotos = []
+        reviewSubmitError = nil
+    }
+
+    private func submitReviewAction(draft: ReviewActionDraft) async {
+        guard let sid = session.spaceId else {
+            reviewSubmitError = "缺少 Space，無法送出審核。"
+            return
+        }
+        guard let task = detail?.task else {
+            reviewSubmitError = "尚未載入任務資料。"
+            return
+        }
+        guard let qdid = resolvedQualityDrawingId(for: task), !qdid.isEmpty else {
+            reviewSubmitError = "缺少平面圖資訊，無法送出審核。"
+            return
+        }
+        guard let submissionId = detail?.latestSubmission?.id, !submissionId.isEmpty else {
+            reviewSubmitError = "缺少提交資料，無法送出審核。"
+            return
+        }
+        guard reviewCommentText.count <= 2000 else {
+            reviewSubmitError = "意見最多 2000 個字。"
+            return
+        }
+
+        isSubmittingReview = true
+        reviewSubmitError = nil
+        defer { isSubmittingReview = false }
+
+        let trimmed = reviewCommentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let files = reviewPickedPhotos.map { ($0.data, $0.filename, $0.mimeType) }
+
+        do {
+            if !files.isEmpty {
+                let uploadResp: UploadReviewAttachmentsResponseDto
+                switch draft.kind {
+                case .director:
+                    uploadResp = try await QualityTaskAPI.uploadDirectorReviewAttachments(
+                        projectCode: projectCode,
+                        qualityDrawingId: qdid,
+                        taskId: taskId,
+                        submissionId: submissionId,
+                        attachments: files,
+                        spaceId: sid
+                    )
+                case .reviewer:
+                    uploadResp = try await QualityTaskAPI.uploadReviewAttachments(
+                        projectCode: projectCode,
+                        qualityDrawingId: qdid,
+                        taskId: taskId,
+                        submissionId: submissionId,
+                        attachments: files,
+                        spaceId: sid
+                    )
+                }
+                if uploadResp.success == false {
+                    reviewSubmitError = uploadResp.message ?? "部分附件上傳失敗，請確認後再試。"
+                    return
+                }
+            }
+
+            let body = ReviewSubmissionBody(
+                reviewResult: draft.result,
+                reviewComment: trimmed.isEmpty ? nil : trimmed
+            )
+            switch draft.kind {
+            case .director:
+                _ = try await QualityTaskAPI.directorReviewSubmission(
+                    projectCode: projectCode,
+                    qualityDrawingId: qdid,
+                    taskId: taskId,
+                    submissionId: submissionId,
+                    body: body,
+                    spaceId: sid
+                )
+            case .reviewer:
+                _ = try await QualityTaskAPI.reviewSubmission(
+                    projectCode: projectCode,
+                    qualityDrawingId: qdid,
+                    taskId: taskId,
+                    submissionId: submissionId,
+                    body: body,
+                    spaceId: sid
+                )
+            }
+
+            showExecutionSaveNotice(draft.result == .approved ? "已送出通過結果。" : "已退回任務。")
+            clearReviewDraft()
+            await loadAll()
+            refreshPendingExecutions()
+            await notifyTaskChanged()
+        } catch {
+            reviewSubmitError = error.userFacingMessage
+        }
+    }
+
+    private func notifyTaskChanged() async {
+        if let onTaskChanged {
+            await onTaskChanged()
         }
     }
 }
@@ -1732,6 +2322,7 @@ private struct AddExecutionSheet: View {
             }
             .dismissKeyboardOnScroll()
             .keyboardDoneToolbar()
+            .nobleHallFormStyle()
             .navigationTitle("新增紀錄")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

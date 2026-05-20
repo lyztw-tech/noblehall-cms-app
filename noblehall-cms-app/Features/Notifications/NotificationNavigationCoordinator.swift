@@ -12,15 +12,23 @@ final class NotificationNavigationCoordinator {
         let qualityDrawingId: String?
     }
 
+    struct MyTasksFocus: Identifiable, Equatable {
+        let id = UUID()
+        let projectCode: String
+        let taskId: String
+        let qualityDrawingId: String?
+    }
+
     var taskDetail: TaskDetailPresentation?
+    var myTasksFocus: MyTasksFocus?
+    var notificationInboxFocus: UUID?
 
     func open(deepLink: NotificationDeepLink, currentProjectCode: String) {
         if deepLink.projectCode != currentProjectCode {
             // 跨專案通知：仍嘗試在目前專案開啟任務（多數連結為當前專案）。
         }
         guard let route = deepLink.taskDetailRoute else { return }
-        taskDetail = TaskDetailPresentation(
-            id: route.taskId,
+        myTasksFocus = MyTasksFocus(
             projectCode: route.projectCode,
             taskId: route.taskId,
             qualityDrawingId: route.qualityDrawingId
@@ -28,11 +36,23 @@ final class NotificationNavigationCoordinator {
     }
 
     func open(link: String, currentProjectCode: String) {
-        guard let deepLink = NotificationDeepLink.parse(link: link) else { return }
+        guard let deepLink = NotificationDeepLink.parse(link: link) else {
+            openInbox()
+            return
+        }
         open(deepLink: deepLink, currentProjectCode: currentProjectCode)
+    }
+
+    func openInbox() {
+        notificationInboxFocus = UUID()
     }
 
     func clear() {
         taskDetail = nil
+    }
+
+    func clearMyTasksFocus(id: MyTasksFocus.ID) {
+        guard myTasksFocus?.id == id else { return }
+        myTasksFocus = nil
     }
 }

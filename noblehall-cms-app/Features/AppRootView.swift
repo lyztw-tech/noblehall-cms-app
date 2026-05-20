@@ -96,6 +96,51 @@ struct NobleHallSectionHeader: View {
     }
 }
 
+private struct NobleHallLaunchSplashView: View {
+    @State private var logoVisible = false
+    @State private var pulse = false
+
+    var body: some View {
+        ZStack {
+            NobleHallTheme.warmBackground
+                .ignoresSafeArea()
+
+            VStack(spacing: 28) {
+                Image("NobleHallLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 190)
+                    .scaleEffect(logoVisible ? 1 : 0.92)
+                    .opacity(logoVisible ? 1 : 0)
+                    .shadow(color: NobleHallTheme.brandGold.opacity(0.14), radius: 18, x: 0, y: 10)
+
+                ZStack {
+                    Circle()
+                        .stroke(NobleHallTheme.brandGold.opacity(0.16), lineWidth: 3)
+                        .frame(width: 34, height: 34)
+                    Circle()
+                        .trim(from: 0, to: 0.68)
+                        .stroke(
+                            NobleHallTheme.brandGold,
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                        )
+                        .frame(width: 34, height: 34)
+                        .rotationEffect(.degrees(pulse ? 360 : 0))
+                }
+                .opacity(logoVisible ? 1 : 0)
+            }
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.62, dampingFraction: 0.78)) {
+                logoVisible = true
+            }
+            withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
+                pulse = true
+            }
+        }
+    }
+}
+
 struct NobleHallStatusPill: View {
     let title: String
     var systemImage: String? = nil
@@ -216,6 +261,8 @@ struct AppRootView: View {
     @Environment(NotificationNavigationCoordinator.self) private var notificationNav
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @State private var showLaunchSplash = true
+    @State private var latestRemoteNotificationToken: String?
 
     var body: some View {
         Group {
@@ -238,28 +285,58 @@ struct AppRootView: View {
             )
         }
         .onReceive(NotificationCenter.default.publisher(for: .nobleHallNotificationDeepLink)) { note in
-            guard let link = note.userInfo?["link"] as? String,
-                  let deepLink = notificationInbox.handleDeepLinkString(link)
-            else { return }
-            openNotificationDeepLink(deepLink)
+            guard let link = note.userInfo?["link"] as? String else { return }
+            if let deepLink = notificationInbox.handleDeepLinkString(link) {
+                openNotificationDeepLink(deepLink)
+            } else {
+                notificationNav.openInbox()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nobleHallRemoteNotificationReceived)) { _ in
+            guard session.isLoggedIn else { return }
+            Task { await notificationInbox.syncFromServer() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .nobleHallRemoteNotificationTokenUpdated)) { note in
+            guard let token = note.userInfo?["token"] as? String, !token.isEmpty else { return }
+            print("[APNs] token notification received tokenPrefix=\(token.prefix(12))")
+            latestRemoteNotificationToken = token
+            Task { await registerRemoteNotificationTokenIfPossible(token) }
+        }
+        .overlay {
+            if showLaunchSplash {
+                NobleHallLaunchSplashView()
+                    .transition(.opacity.combined(with: .scale(scale: 1.015)))
+                    .zIndex(10)
+            }
         }
         .dismissKeyboardOnTapOutside()
         .animation(.easeInOut(duration: 0.2), value: session.isLoggedIn)
         .animation(.easeInOut(duration: 0.2), value: session.selectedProjectCode)
+        .animation(.easeOut(duration: 0.35), value: showLaunchSplash)
         .task(id: bootstrapTaskKey) {
             await bootstrapSessionAndPreload()
             syncNotificationInboxLifecycle()
+        }
+        .task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            showLaunchSplash = false
         }
         .onChange(of: session.isLoggedIn) { _, loggedIn in
             if !loggedIn {
                 notificationInbox.stop()
             } else {
                 notificationInbox.startIfLoggedIn()
+                if let latestRemoteNotificationToken {
+                    Task { await registerRemoteNotificationTokenIfPossible(latestRemoteNotificationToken) }
+                }
             }
         }
         .onChange(of: session.spaceId) { _, _ in
             guard session.isLoggedIn else { return }
             notificationInbox.startIfLoggedIn()
+            if let latestRemoteNotificationToken {
+                Task { await registerRemoteNotificationTokenIfPossible(latestRemoteNotificationToken) }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, session.isLoggedIn else { return }
@@ -311,6 +388,16 @@ struct AppRootView: View {
             session.setSelectedProject(code: deepLink.projectCode)
         }
         notificationNav.open(deepLink: deepLink, currentProjectCode: deepLink.projectCode)
+    }
+
+    private func registerRemoteNotificationTokenIfPossible(_ token: String) async {
+        guard session.isLoggedIn else { return }
+        do {
+            try await NotificationAPI.registerAPNsDeviceToken(token, spaceId: session.spaceId)
+            print("[APNs] device token uploaded")
+        } catch {
+            print("[APNs] device token upload failed: \(error.localizedDescription)")
+        }
     }
 
     /// 先還原登入（Cookie），再預載平面圖；避免預載搶跑導致圖檔下載失敗、僅有座標點。

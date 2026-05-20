@@ -61,25 +61,13 @@ final class NotificationInboxStore {
 
     /// 主畫面定期呼叫：拉未讀數（不依賴是否進入通知 Tab）。
     func syncFromServer() async {
-        await refreshUnreadCount(postLocalAlertOnIncrease: true)
+        await refreshUnreadCount()
     }
 
-    /// - Parameter postLocalAlertOnIncrease: 輪詢發現未讀增加時為 true；SSE 會另發含標題的推播。
-    func refreshUnreadCount(postLocalAlertOnIncrease: Bool = false) async {
+    func refreshUnreadCount() async {
         guard let spaceId = session?.spaceId else { return }
         do {
             let newCount = try await NotificationAPI.unreadCount(spaceId: spaceId)
-            if postLocalAlertOnIncrease,
-               hasEstablishedUnreadBaseline,
-               newCount > lastUnreadForPushCompare
-            {
-                let delta = newCount - lastUnreadForPushCompare
-                await NotificationLocalPush.postNewNotification(
-                    title: delta == 1 ? "您有一則新通知" : "您有 \(newCount) 則未讀通知",
-                    body: nil,
-                    link: nil
-                )
-            }
             unreadCount = newCount
             lastUnreadForPushCompare = newCount
             hasEstablishedUnreadBaseline = true
@@ -157,6 +145,30 @@ final class NotificationInboxStore {
         }
     }
 
+    func clearAll() async {
+        guard let spaceId = session?.spaceId else { return }
+        let snapshot = items
+        let previousUnread = unreadCount
+        items = []
+        unreadCount = 0
+        lastUnreadForPushCompare = 0
+        hasEstablishedUnreadBaseline = true
+        page = 1
+        totalPages = 0
+        loadError = nil
+        await updateApplicationBadge()
+        do {
+            _ = try await NotificationAPI.clearAll(spaceId: spaceId)
+            await refreshUnreadCount()
+        } catch {
+            items = snapshot
+            unreadCount = previousUnread
+            lastUnreadForPushCompare = previousUnread
+            loadError = error.userFacingMessage
+            await updateApplicationBadge()
+        }
+    }
+
     func handleTap(_ item: NotificationDto) -> NotificationDeepLink? {
         let deepLink = NotificationDeepLink.parse(link: item.link)
         if item.isUnread {
@@ -181,17 +193,10 @@ final class NotificationInboxStore {
 
     private func handleSSE(_ event: NotificationSSEEvent) async {
         switch event.kind {
-        case let .new(title, body, link):
-            await refreshUnreadCount(postLocalAlertOnIncrease: false)
+        case .new(_, _, _):
+            await refreshUnreadCount()
             if hasLoadedInboxOnce {
                 await fetchInbox(reset: true)
-            }
-            if let title, !title.isEmpty {
-                await NotificationLocalPush.postNewNotification(
-                    title: title,
-                    body: body,
-                    link: link
-                )
             }
         case .readUpdate:
             await refreshUnreadCount()
@@ -215,6 +220,10 @@ final class NotificationInboxStore {
     }
 
     private func updateApplicationBadge() async {
-        try? await UNUserNotificationCenter.current().setBadgeCount(unreadCount)
+        do {
+            try await UNUserNotificationCenter.current().setBadgeCount(unreadCount)
+        } catch {
+            print("[APNs] setBadgeCount failed: \(error.localizedDescription)")
+        }
     }
 }

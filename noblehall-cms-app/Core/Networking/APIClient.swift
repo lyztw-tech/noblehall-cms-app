@@ -125,8 +125,11 @@ actor APIClient {
         guard let url = components?.url else { throw APIRequestError.invalidURL }
 
         var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.httpMethod = method.rawValue
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         request.setValue("NoblehallCMS-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
         if let spaceId, !spaceId.isEmpty {
             request.setValue(spaceId, forHTTPHeaderField: "x-space-id")
@@ -169,8 +172,11 @@ actor APIClient {
         guard let url = components?.url else { throw APIRequestError.invalidURL }
 
         var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.httpMethod = method.rawValue
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         request.setValue("NoblehallCMS-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
         if let spaceId, !spaceId.isEmpty {
             request.setValue(spaceId, forHTTPHeaderField: "x-space-id")
@@ -240,9 +246,12 @@ actor APIClient {
         let body = APIClientCodec.buildMultipartBody(boundary: boundary, fields: fields, files: files)
 
         var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.httpMethod = method.rawValue
         request.httpBody = body
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
         request.setValue("NoblehallCMS-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 300
         if let spaceId, !spaceId.isEmpty {

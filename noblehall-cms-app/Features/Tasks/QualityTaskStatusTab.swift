@@ -19,7 +19,11 @@ enum QualityTaskStatusTab: String, CaseIterable, Identifiable, Hashable {
         case .pendingAssignment:
             return normalized == "pending_assignment" || normalized == "待指派"
         case .inProgress:
-            return normalized == "in_progress" || normalized == "執行中" || normalized == "進行中"
+            return normalized == "in_progress"
+                || normalized == "rejected"
+                || normalized == "執行中"
+                || normalized == "進行中"
+                || normalized == "已退回"
         case .inReview:
             return normalized == "in_review"
                 || normalized == "director_check"
@@ -27,5 +31,9 @@ enum QualityTaskStatusTab: String, CaseIterable, Identifiable, Hashable {
                 || normalized == "審查中"
                 || normalized == "負責人確認"
         }
+    }
+
+    static func tab(for status: String?) -> QualityTaskStatusTab? {
+        allCases.first { $0.matches(status: status) }
     }
 }

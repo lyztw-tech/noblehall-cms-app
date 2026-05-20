@@ -1,7 +1,9 @@
 import Foundation
+import UIKit
 import UserNotifications
 
-/// App 內 SSE／輪詢發現新通知時，於 iOS 通知中心顯示（與 Web Push 並行）。
+/// App 本機狀態通知，例如離線後恢復連線、離線資料同步完成或失敗。
+/// 業務通知由後端透過 APNs 發送，避免同一筆通知在前景重複彈出。
 enum NotificationLocalPush {
     private static let linkUserInfoKey = "nh.link"
 
@@ -16,17 +18,25 @@ enum NotificationLocalPush {
         let settings = await center.notificationSettings()
         switch settings.authorizationStatus {
         case .authorized, .provisional, .ephemeral:
+            if settings.badgeSetting != .enabled {
+                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+            }
+            await registerForRemoteNotifications()
             return true
         case .denied:
             return false
         case .notDetermined:
-            return (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) == true
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) == true
+            if granted {
+                await registerForRemoteNotifications()
+            }
+            return granted
         @unknown default:
             return false
         }
     }
 
-    static func postNewNotification(title: String, body: String?, link: String?) async {
+    static func postNewNotification(title: String, body: String?, link: String?, badgeCount: Int? = nil) async {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized
@@ -43,6 +53,9 @@ enum NotificationLocalPush {
             content.userInfo = [linkUserInfoKey: link]
         }
         content.sound = .default
+        if let badgeCount {
+            content.badge = NSNumber(value: badgeCount)
+        }
 
         let request = UNNotificationRequest(
             identifier: "nh.inbox.\(UUID().uuidString)",
@@ -54,5 +67,11 @@ enum NotificationLocalPush {
 
     static func link(from userInfo: [AnyHashable: Any]) -> String? {
         userInfo[linkUserInfoKey] as? String
+    }
+
+    private static func registerForRemoteNotifications() async {
+        await MainActor.run {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
     }
 }

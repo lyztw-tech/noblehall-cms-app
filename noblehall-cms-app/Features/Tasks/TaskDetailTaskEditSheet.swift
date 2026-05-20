@@ -169,6 +169,7 @@ struct TaskDetailTaskEditSheet: View {
                     }
                 }
             }
+            .nobleHallFormStyle()
             .navigationTitle("編輯任務")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -41,6 +41,7 @@ struct TaskManagementRootView: View {
         }
         .navigationTitle("任務管理")
         .navigationBarTitleDisplayMode(.inline)
+        .nobleHallScreen()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
@@ -182,13 +183,18 @@ struct TaskManagementAllTasksView: View {
             searchAccessibilityLabel: "搜尋任務"
         )
         .sheet(isPresented: $showSearch) {
-            TaskSearchView(projectCode: projectCode, tasks: tasks)
+            TaskSearchView(
+                projectCode: projectCode,
+                tasks: tasks,
+                onTaskChanged: { await load() }
+            )
         }
         .fullScreenCover(item: $selectedRoute) { route in
             TaskDetailView(
                 projectCode: projectCode,
                 taskId: route.id,
-                onClose: { selectedRoute = nil }
+                onClose: { selectedRoute = nil },
+                onTaskChanged: { await load() }
             )
         }
         .dismissKeyboardOnTapOutside()
@@ -269,6 +275,7 @@ struct TaskManagementFloorPlanListView: View {
         }
         .refreshable { await load() }
         .task { await load() }
+        .nobleHallScreen()
         .taskManagementSearchFilterToolbar(
             showSearch: $showSearch,
             showFilter: $showFilter,
@@ -360,6 +367,8 @@ struct DrawingSearchView: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(NobleHallTheme.warmBackground)
                 .dismissKeyboardOnScroll()
             }
         }
@@ -548,7 +557,8 @@ struct TaskManagementStatusTaskListView: View {
             TaskDetailView(
                 projectCode: projectCode,
                 taskId: route.id,
-                onClose: { selectedRoute = nil }
+                onClose: { selectedRoute = nil },
+                onTaskChanged: { await load() }
             )
         }
     }

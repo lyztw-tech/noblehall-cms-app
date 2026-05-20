@@ -32,6 +32,7 @@ struct NobleHallNativeSearchScreen<Results: View>: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .nobleHallScreen()
         .navigationTitle("搜尋")
         .navigationBarTitleDisplayMode(.large)
         .searchable(text: $query, isPresented: $isSearchFieldPresented, prompt: prompt)

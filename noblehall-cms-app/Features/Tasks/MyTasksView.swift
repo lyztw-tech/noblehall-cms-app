@@ -18,6 +18,7 @@ struct MyTasksView: View {
     let projectCode: String
     @Environment(SessionStore.self) private var session
     @Environment(NetworkPathMonitor.self) private var network
+    @Environment(NotificationNavigationCoordinator.self) private var notificationNav
     @Environment(\.modelContext) private var modelContext
 
     @Query private var pendingCreates: [PendingTaskCreateOutbox]
@@ -67,7 +68,47 @@ struct MyTasksView: View {
     }
 
     private func tasksMatching(_ tab: QualityTaskStatusTab) -> [QualityTaskListItemDto] {
-        mergedTasks.filter { tab.matches(status: $0.status) }
+        mergedTasks.filter { task in
+            tab.matches(status: task.status) && shouldShow(task: task, in: tab)
+        }
+    }
+
+    private func shouldShow(task: QualityTaskListItemDto, in tab: QualityTaskStatusTab) -> Bool {
+        guard !task.id.hasPrefix("pending-") else { return true }
+        let userId = session.currentUser?.id
+        let normalizedStatus = QualityTaskEditEligibility.normalizedStatus(task.status)
+
+        switch tab {
+        case .pendingAssignment:
+            return normalizedStatus == "pending_assignment" && canAssignQualityTasks
+        case .inReview:
+            if normalizedStatus == "in_review" {
+                guard let userId, !userId.isEmpty else { return false }
+                return task.reviewer?.id == userId
+            }
+            if normalizedStatus == "director_check" {
+                // 線上載入時會用詳情的 viewer.isProjectOwner 預先濾掉非負責人的項目。
+                return true
+            }
+            return false
+        case .inProgress:
+            return true
+        }
+    }
+
+    private var canAssignQualityTasks: Bool {
+        hasPermission(resource: "quality_task", action: "assign")
+            || hasPermission(resource: "quality_task_management", action: "assign")
+            || hasPermission(resource: "quality_task", action: "update")
+    }
+
+    private func hasPermission(resource: String, action: String) -> Bool {
+        guard let permissions = session.currentUser?.permissions else { return false }
+        return permissions.contains { raw in
+            let parts = raw.lowercased().split(separator: ":").map(String.init)
+            guard parts.count >= 2 else { return false }
+            return parts[0] == resource && parts[1] == action
+        }
     }
 
     /// 目前選取之狀態分頁的任務（供空狀態 overlay 等使用）。
@@ -238,9 +279,15 @@ struct MyTasksView: View {
                         .padding(.top, headerChromeHeight)
                 }
             }
-            .task { await load(force: false) }
+            .task {
+                await load(force: false)
+                await handlePendingNotificationFocusIfNeeded()
+            }
             .onChange(of: filterStore.revision) { _, _ in
                 Task { await load(force: true) }
+            }
+            .onChange(of: notificationNav.myTasksFocus?.id) { _, _ in
+                Task { await handlePendingNotificationFocusIfNeeded() }
             }
             .onChange(of: network.isConnected) { _, online in
                 guard online, let sid = session.spaceId else { return }
@@ -250,14 +297,19 @@ struct MyTasksView: View {
                 }
             }
             .sheet(isPresented: $showSearch) {
-                TaskSearchView(projectCode: projectCode, tasks: mergedTasks)
+                TaskSearchView(
+                    projectCode: projectCode,
+                    tasks: mergedTasks,
+                    onTaskChanged: { await load(force: true) }
+                )
             }
             .fullScreenCover(item: $selectedRoute) { route in
                 TaskDetailView(
                     projectCode: projectCode,
                     taskId: route.id,
                     qualityDrawingIdHint: route.qualityDrawingId,
-                    onClose: { selectedRoute = nil }
+                    onClose: { selectedRoute = nil },
+                    onTaskChanged: { await load(force: true) }
                 )
             }
             .sheet(isPresented: $showDrawingPicker) {
@@ -299,6 +351,44 @@ struct MyTasksView: View {
                 }
             }
         }
+    }
+
+    private func handlePendingNotificationFocusIfNeeded() async {
+        guard let focus = notificationNav.myTasksFocus,
+              focus.projectCode == projectCode
+        else { return }
+
+        listScope = .all
+        await load(force: true)
+
+        var resolvedStatus: String?
+        var resolvedDrawingId = focus.qualityDrawingId
+
+        if let row = mergedTasks.first(where: { $0.id == focus.taskId }) {
+            resolvedStatus = row.status
+            resolvedDrawingId = row.qualityDrawing?.id ?? resolvedDrawingId
+        } else if let sid = session.spaceId,
+                  let detail = try? await QualityTaskAPI.taskDetail(
+                      projectCode: projectCode,
+                      taskId: focus.taskId,
+                      spaceId: sid
+                  )
+        {
+            resolvedStatus = detail.task.status
+            resolvedDrawingId = resolvedQualityDrawingId(from: detail.task) ?? resolvedDrawingId
+        }
+
+        if let targetTab = QualityTaskStatusTab.tab(for: resolvedStatus) {
+            statusTab = targetTab
+        }
+
+        selectedRoute = TaskRoute(id: focus.taskId, qualityDrawingId: resolvedDrawingId)
+        notificationNav.clearMyTasksFocus(id: focus.id)
+    }
+
+    private func resolvedQualityDrawingId(from task: QualityTaskDto) -> String? {
+        let direct = task.qualityDrawing?.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        return direct?.isEmpty == false ? direct : nil
     }
 
 
@@ -379,18 +469,53 @@ struct MyTasksView: View {
                 projectCode: projectCode,
                 spaceId: sid,
                 filter: filterStore,
-                executorIds: executorFilter.map { [$0] }
+                executorIds: executorFilter.map { [$0] },
+                onlyMyTasks: true
             )
-            tasks = loaded
-            try LocalTaskCache.replaceProjectTasks(loaded, projectCode: projectCode, context: modelContext)
+            let visible = await filterActionableMyTasks(loaded, spaceId: sid)
+            tasks = visible
+            try LocalTaskCache.replaceProjectTasks(visible, projectCode: projectCode, context: modelContext)
             try modelContext.save()
-            await prefetchTaskDetails(loaded, spaceId: sid)
+            await prefetchTaskDetails(visible, spaceId: sid)
         } catch {
             loadError = error.userFacingMessage
             if let rows = try? LocalTaskCache.tasks(projectCode: projectCode, context: modelContext) {
                 tasks = rows.map(Self.mapCached)
             }
         }
+    }
+
+    private func filterActionableMyTasks(_ rows: [QualityTaskListItemDto], spaceId: String) async -> [QualityTaskListItemDto] {
+        let userId = session.currentUser?.id
+        var output: [QualityTaskListItemDto] = []
+
+        for row in rows {
+            let status = QualityTaskEditEligibility.normalizedStatus(row.status)
+            switch status {
+            case "pending_assignment":
+                if canAssignQualityTasks {
+                    output.append(row)
+                }
+            case "in_review":
+                if let userId, !userId.isEmpty, row.reviewer?.id == userId {
+                    output.append(row)
+                }
+            case "director_check":
+                if let detail = try? await QualityTaskAPI.taskDetail(
+                    projectCode: projectCode,
+                    taskId: row.id,
+                    spaceId: spaceId
+                ),
+                   detail.viewer?.isProjectOwner == true
+                {
+                    output.append(row)
+                }
+            default:
+                output.append(row)
+            }
+        }
+
+        return output
     }
 
     /// 連線載入列表後，背景快取任務詳情供離線執行（平面圖＋任務資料）。
@@ -419,7 +544,10 @@ struct MyTasksView: View {
             status: row.status,
             group: nil,
             room: nil,
+            executorId: nil,
+            executorType: nil,
             executor: nil,
+            reviewer: nil,
             createdAt: row.createdAt
         )
     }

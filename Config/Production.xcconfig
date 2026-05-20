@@ -5,3 +5,4 @@ API_BASE_URL = https:/$()/api.example.com/api
 APP_DISPLAY_NAME = NobleHall
 APP_BUNDLE_IDENTIFIER = lyztw.noblehall-cms-app
 NOBLEHALL_ENVIRONMENT = Production
+APS_ENVIRONMENT = production

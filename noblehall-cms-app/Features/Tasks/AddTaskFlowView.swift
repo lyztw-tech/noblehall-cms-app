@@ -65,6 +65,7 @@ struct QualityDrawingPickerSheet: View {
             }
             .navigationTitle("選擇平面圖")
             .navigationBarTitleDisplayMode(.inline)
+            .nobleHallGroupedListStyle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消", action: onCancel)
@@ -139,7 +140,7 @@ struct AddTaskPlanScreen: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(white: 0.93).ignoresSafeArea()
+                NobleHallTheme.warmBackground.ignoresSafeArea()
                 if isLoading {
                     ProgressView("載入平面圖…")
                 } else if let loadError {
@@ -219,6 +220,7 @@ struct AddTaskPlanScreen: View {
             }
             .task { await loadPlan() }
         }
+        .nobleHallScreen()
     }
 
     private func loadPlan() async {
@@ -471,6 +473,7 @@ private struct CreateTaskFormSheet: View {
             }
             .dismissKeyboardOnScroll()
             .keyboardDoneToolbar()
+            .nobleHallFormStyle()
             .navigationTitle("新增任務")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

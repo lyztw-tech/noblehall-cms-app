@@ -5,3 +5,4 @@ API_BASE_URL = http:/$()/192.168.0.71:3000/api
 APP_DISPLAY_NAME = NobleHall Alpha
 APP_BUNDLE_IDENTIFIER = lyztw.noblehall-cms-app.alpha
 NOBLEHALL_ENVIRONMENT = Alpha
+APS_ENVIRONMENT = development

@@ -10,7 +10,10 @@ struct QualityTaskListItemDto: Codable, Sendable, Identifiable {
     let status: String?
     let group: NamedRefDto?
     let room: NamedRefDto?
+    let executorId: String?
+    let executorType: String?
     let executor: ExecutorRefDto?
+    let reviewer: ReviewerDto?
     /// 列表 API 與 `QualityTaskDto` 相同之 `createdAt`；離線暫存列可能為入佇時間。
     let createdAt: Date?
 }
@@ -27,6 +30,7 @@ struct NamedRefDto: Codable, Sendable {
 
 struct ExecutorRefDto: Codable, Sendable {
     let id: String?
+    let type: String?
     let displayName: String?
     let name: String?
 }
@@ -299,8 +303,25 @@ struct CreateExecutionBody: Encodable, Sendable {
     let executionReply: String?
 }
 
+struct SubmitExecutionBody: Encodable, Sendable {
+    let executionIds: [String]?
+    let newExecution: CreateExecutionBody?
+
+    static let savedExecutionsOnly = SubmitExecutionBody(executionIds: nil, newExecution: nil)
+}
+
 struct UpdateExecutionBody: Encodable, Sendable {
     let executionReply: String?
+}
+
+enum QualityTaskReviewResult: String, Encodable, Sendable {
+    case approved
+    case rejected
+}
+
+struct ReviewSubmissionBody: Encodable, Sendable {
+    let reviewResult: QualityTaskReviewResult
+    let reviewComment: String?
 }
 
 struct CreateExecutionResponseDto: Decodable, Sendable {
@@ -319,6 +340,9 @@ struct UploadExecutionAttachmentsResponseDto: Decodable, Sendable {
     let success: Bool?
     let message: String?
 }
+
+/// POST review attachment endpoints use the same top-level response shape as execution attachment uploads.
+typealias UploadReviewAttachmentsResponseDto = UploadExecutionAttachmentsResponseDto
 
 // MARK: - Quality drawings list
 

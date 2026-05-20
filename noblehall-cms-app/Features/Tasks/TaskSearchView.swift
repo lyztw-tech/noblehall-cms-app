@@ -3,6 +3,7 @@ import SwiftUI
 struct TaskSearchView: View {
     let projectCode: String
     let tasks: [QualityTaskListItemDto]
+    var onTaskChanged: (() async -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
@@ -44,6 +45,8 @@ struct TaskSearchView: View {
                         }
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .background(NobleHallTheme.warmBackground)
                     .dismissKeyboardOnScroll()
                 }
             }
@@ -53,7 +56,8 @@ struct TaskSearchView: View {
                 projectCode: projectCode,
                 taskId: route.id,
                 qualityDrawingIdHint: route.qualityDrawingId,
-                onClose: { selectedRoute = nil }
+                onClose: { selectedRoute = nil },
+                onTaskChanged: onTaskChanged
             )
         }
     }

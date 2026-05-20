@@ -17,7 +17,7 @@ enum NetworkReconnectNotifier {
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .notDetermined else { return }
-        _ = try? await center.requestAuthorization(options: [.alert, .sound])
+        _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
     }
 
     /// 由 `AppRootView` 在 `network.isConnected` 變化時呼叫。

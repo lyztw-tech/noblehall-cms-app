@@ -121,4 +121,8 @@ enum AppMetadata: Sendable {
     nonisolated static var version: String {
         (Bundle(for: AppBundleAnchor.self).object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.0"
     }
+
+    nonisolated static var bundleIdentifier: String {
+        (Bundle(for: AppBundleAnchor.self).object(forInfoDictionaryKey: "CFBundleIdentifier") as? String) ?? "unknown"
+    }
 }

@@ -5,3 +5,4 @@ API_BASE_URL = https:/$()/beta-api.example.com/api
 APP_DISPLAY_NAME = NobleHall Beta
 APP_BUNDLE_IDENTIFIER = lyztw.noblehall-cms-app.beta
 NOBLEHALL_ENVIRONMENT = Beta
+APS_ENVIRONMENT = development

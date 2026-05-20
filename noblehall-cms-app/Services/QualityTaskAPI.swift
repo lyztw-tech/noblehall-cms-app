@@ -19,6 +19,7 @@ enum QualityTaskAPI: Sendable {
         endDate: String? = nil,
         dueDateFrom: String? = nil,
         dueDateTo: String? = nil,
+        onlyMyTasks: Bool? = nil,
         page: Int = 1,
         limit: Int = 100
     ) async throws -> QualityTaskListResponseDto {
@@ -79,6 +80,9 @@ enum QualityTaskAPI: Sendable {
         if let dueDateTo, !dueDateTo.isEmpty {
             queryItems.append(URLQueryItem(name: "dueDateTo", value: dueDateTo))
         }
+        if let onlyMyTasks {
+            queryItems.append(URLQueryItem(name: "onlyMyTasks", value: onlyMyTasks ? "true" : "false"))
+        }
         return try await APIClient.shared.send(
             .GET,
             path: "projects/\(projectCode)/quality-tasks",
@@ -93,7 +97,8 @@ enum QualityTaskAPI: Sendable {
         filter: TaskManagementFilterStore? = nil,
         executorIds: [String]? = nil,
         qualityDrawingId: String? = nil,
-        statuses: [String]? = nil
+        statuses: [String]? = nil,
+        onlyMyTasks: Bool? = nil
     ) async throws -> [QualityTaskListItemDto] {
         let pageLimit = 100
         var page = 1
@@ -128,6 +133,7 @@ enum QualityTaskAPI: Sendable {
                 endDate: filter?.createdTo.map { fmt.string(from: $0) },
                 dueDateFrom: filter?.dueFrom.map { fmt.string(from: $0) },
                 dueDateTo: filter?.dueTo.map { fmt.string(from: $0) },
+                onlyMyTasks: onlyMyTasks,
                 page: page,
                 limit: pageLimit
             )
@@ -344,6 +350,21 @@ enum QualityTaskAPI: Sendable {
         )
     }
 
+    static func submitExecution(
+        projectCode: String,
+        qualityDrawingId: String,
+        taskId: String,
+        body: SubmitExecutionBody = .savedExecutionsOnly,
+        spaceId: String
+    ) async throws -> QualityTaskSubmissionDto {
+        try await APIClient.shared.send(
+            .POST,
+            path: "projects/\(projectCode)/quality-drawings/\(qualityDrawingId)/tasks/\(taskId)/submissions/submit",
+            body: body,
+            spaceId: spaceId
+        )
+    }
+
     static func updateExecution(
         projectCode: String,
         qualityDrawingId: String,
@@ -396,5 +417,83 @@ enum QualityTaskAPI: Sendable {
         let path =
             "projects/\(projectCode)/quality-drawings/\(qualityDrawingId)/tasks/\(taskId)/submissions/executions/\(executionId)"
         try await APIClient.shared.sendVoid(.DELETE, path: path, spaceId: spaceId)
+    }
+
+    static func directorReviewSubmission(
+        projectCode: String,
+        qualityDrawingId: String,
+        taskId: String,
+        submissionId: String,
+        body: ReviewSubmissionBody,
+        spaceId: String
+    ) async throws -> QualityTaskSubmissionDto {
+        try await APIClient.shared.send(
+            .PATCH,
+            path: "projects/\(projectCode)/quality-drawings/\(qualityDrawingId)/tasks/\(taskId)/submissions/\(submissionId)/director-review",
+            body: body,
+            spaceId: spaceId
+        )
+    }
+
+    static func reviewSubmission(
+        projectCode: String,
+        qualityDrawingId: String,
+        taskId: String,
+        submissionId: String,
+        body: ReviewSubmissionBody,
+        spaceId: String
+    ) async throws -> QualityTaskSubmissionDto {
+        try await APIClient.shared.send(
+            .PATCH,
+            path: "projects/\(projectCode)/quality-drawings/\(qualityDrawingId)/tasks/\(taskId)/submissions/\(submissionId)/review",
+            body: body,
+            spaceId: spaceId
+        )
+    }
+
+    static func uploadDirectorReviewAttachments(
+        projectCode: String,
+        qualityDrawingId: String,
+        taskId: String,
+        submissionId: String,
+        attachments: [(data: Data, filename: String, mimeType: String)],
+        spaceId: String
+    ) async throws -> UploadReviewAttachmentsResponseDto {
+        let path =
+            "projects/\(projectCode)/quality-drawings/\(qualityDrawingId)/tasks/\(taskId)/submissions/\(submissionId)/director-review/attachments"
+        let parts = attachments.map {
+            MultipartFilePart(fieldName: "attachments", filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
+        }
+        return try await APIClient.shared.sendMultipart(
+            .POST,
+            path: path,
+            queryItems: nil,
+            fields: [:],
+            files: parts,
+            spaceId: spaceId
+        )
+    }
+
+    static func uploadReviewAttachments(
+        projectCode: String,
+        qualityDrawingId: String,
+        taskId: String,
+        submissionId: String,
+        attachments: [(data: Data, filename: String, mimeType: String)],
+        spaceId: String
+    ) async throws -> UploadReviewAttachmentsResponseDto {
+        let path =
+            "projects/\(projectCode)/quality-drawings/\(qualityDrawingId)/tasks/\(taskId)/submissions/\(submissionId)/review/attachments"
+        let parts = attachments.map {
+            MultipartFilePart(fieldName: "attachments", filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
+        }
+        return try await APIClient.shared.sendMultipart(
+            .POST,
+            path: path,
+            queryItems: nil,
+            fields: [:],
+            files: parts,
+            spaceId: spaceId
+        )
     }
 }

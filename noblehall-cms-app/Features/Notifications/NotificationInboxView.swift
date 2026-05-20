@@ -3,6 +3,7 @@ import SwiftUI
 struct NotificationInboxView: View {
     @Environment(NotificationInboxStore.self) private var inbox
     @Environment(\.dismiss) private var dismiss
+    @State private var showClearConfirm = false
 
     var showsCloseButton: Bool = true
     var onOpenDeepLink: (NotificationDeepLink) -> Void
@@ -58,14 +59,31 @@ struct NotificationInboxView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    if inbox.unreadCount > 0 {
-                        Button("全部已讀") {
-                            Task { await inbox.markAllRead() }
+                    Menu {
+                        if inbox.unreadCount > 0 {
+                            Button("全部已讀") {
+                                Task { await inbox.markAllRead() }
+                            }
                         }
-                        .fontWeight(.semibold)
-                        .foregroundStyle(NobleHallTheme.brandGold)
+                        if !inbox.items.isEmpty {
+                            Button("清除通知", role: .destructive) {
+                                showClearConfirm = true
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .foregroundStyle(NobleHallTheme.brandGold)
                     }
+                    .disabled(inbox.items.isEmpty && inbox.unreadCount == 0)
                 }
+            }
+            .confirmationDialog("清除所有通知？", isPresented: $showClearConfirm, titleVisibility: .visible) {
+                Button("清除通知", role: .destructive) {
+                    Task { await inbox.clearAll() }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("此動作會清除目前帳號的通知列表，無法復原。")
             }
             .refreshable {
                 await inbox.fetchInbox(reset: true)

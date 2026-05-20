@@ -31,7 +31,10 @@ enum TaskCreateOutbox {
             status: "in_progress",
             group: nil,
             room: nil,
+            executorId: nil,
+            executorType: nil,
             executor: nil,
+            reviewer: nil,
             createdAt: row.enqueuedAt
         )
     }
