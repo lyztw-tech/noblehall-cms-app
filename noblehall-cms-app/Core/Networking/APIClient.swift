@@ -91,7 +91,7 @@ private enum APIClientCodec: Sendable {
     }
 }
 
-/// 與 Noblehall CMS API 通訊。使用 **Cookie Session**（與 Web 相同），並帶 `x-space-id`。
+/// 與 Construction Dashboard API 通訊。使用 JWT Bearer token。
 actor APIClient {
     static let shared = APIClient()
 
@@ -101,8 +101,8 @@ actor APIClient {
     init(
         configuration: URLSessionConfiguration = {
             let c = URLSessionConfiguration.default
-            c.httpCookieStorage = .shared
-            c.httpCookieAcceptPolicy = .always
+            c.httpCookieStorage = nil
+            c.httpCookieAcceptPolicy = .never
             c.timeoutIntervalForRequest = 45
             c.timeoutIntervalForResource = 120
             return c
@@ -119,38 +119,7 @@ actor APIClient {
         body: Encodable? = nil,
         spaceId: String?
     ) async throws -> R {
-        try AppConfiguration.validateAPIBaseIsSecureForRequests()
-        var components = URLComponents(url: AppConfiguration.apiRootURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)
-        components?.queryItems = queryItems?.filter { !($0.value ?? "").isEmpty }
-        guard let url = components?.url else { throw APIRequestError.invalidURL }
-
-        var request = URLRequest(url: url)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.httpMethod = method.rawValue
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-        request.setValue("NoblehallCMS-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
-        if let spaceId, !spaceId.isEmpty {
-            request.setValue(spaceId, forHTTPHeaderField: "x-space-id")
-        }
-        if let body {
-            request.httpBody = try APIClientCodec.encodeJSONRequestBody(body)
-        }
-
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw APIRequestError.transport(error, attemptedURL: url)
-        }
-        guard let http = response as? HTTPURLResponse else { throw APIRequestError.invalidResponse }
-
-        guard (200 ... 299).contains(http.statusCode) else {
-            let text = String(data: data, encoding: .utf8)
-            throw APIRequestError.httpStatus(code: http.statusCode, body: text)
-        }
-
+        let data = try await perform(method, path: path, queryItems: queryItems, body: body)
         do {
             return try decoder.decode(R.self, from: data)
         } catch {
@@ -166,39 +135,10 @@ actor APIClient {
         body: Encodable? = nil,
         spaceId: String?
     ) async throws {
-        try AppConfiguration.validateAPIBaseIsSecureForRequests()
-        var components = URLComponents(url: AppConfiguration.apiRootURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)
-        components?.queryItems = queryItems?.filter { !($0.value ?? "").isEmpty }
-        guard let url = components?.url else { throw APIRequestError.invalidURL }
-
-        var request = URLRequest(url: url)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.httpMethod = method.rawValue
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-        request.setValue("NoblehallCMS-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
-        if let spaceId, !spaceId.isEmpty {
-            request.setValue(spaceId, forHTTPHeaderField: "x-space-id")
-        }
-        if let body {
-            request.httpBody = try APIClientCodec.encodeJSONRequestBody(body)
-        }
-
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw APIRequestError.transport(error, attemptedURL: url)
-        }
-        guard let http = response as? HTTPURLResponse else { throw APIRequestError.invalidResponse }
-        guard (200 ... 299).contains(http.statusCode) else {
-            let text = String(data: data, encoding: .utf8)
-            throw APIRequestError.httpStatus(code: http.statusCode, body: text)
-        }
+        _ = try await perform(method, path: path, queryItems: queryItems, body: body)
     }
 
-    /// 下載需登入且須帶 `x-space-id` 的資源（例如 `GET /files/:id`）。勿用 `AsyncImage` 直連此類 URL。
+    /// 下載需登入的資源（例如 `GET /files/:id`）。勿用 `AsyncImage` 直連此類 URL。
     func fetchBinary(url: URL, spaceId: String?) async throws -> Data {
         try AppConfiguration.validateAPIBaseIsSecureForRequests()
         let fetchURL = Self.normalizedAssetFetchURL(url) ?? url
@@ -209,10 +149,7 @@ actor APIClient {
         var request = URLRequest(url: fetchURL)
         request.httpMethod = HTTPMethod.GET.rawValue
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue("NoblehallCMS-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
-        if let spaceId, !spaceId.isEmpty {
-            request.setValue(spaceId, forHTTPHeaderField: "x-space-id")
-        }
+        applyCommonHeaders(to: &request)
 
         let (data, response): (Data, URLResponse)
         do {
@@ -228,7 +165,7 @@ actor APIClient {
         return data
     }
 
-    /// `multipart/form-data`（例如執行紀錄帶 `attachments`）。與 `send` 相同 Cookie、`x-space-id`。
+    /// `multipart/form-data`（例如照片上傳）。與 `send` 相同 Bearer token。
     func sendMultipart<R: Decodable>(
         _ method: HTTPMethod,
         path: String,
@@ -242,7 +179,7 @@ actor APIClient {
         components?.queryItems = queryItems?.filter { !($0.value ?? "").isEmpty }
         guard let url = components?.url else { throw APIRequestError.invalidURL }
 
-        let boundary = "NoblehallFormBoundary" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let boundary = "ConstructionDashboardFormBoundary" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let body = APIClientCodec.buildMultipartBody(boundary: boundary, fields: fields, files: files)
 
         var request = URLRequest(url: url)
@@ -252,10 +189,10 @@ actor APIClient {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         request.setValue("no-cache", forHTTPHeaderField: "Pragma")
-        request.setValue("NoblehallCMS-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
+        request.setValue("ConstructionDashboard-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 300
-        if let spaceId, !spaceId.isEmpty {
-            request.setValue(spaceId, forHTTPHeaderField: "x-space-id")
+        if let token = AuthTokenStore.accessToken, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
         let (data, response): (Data, URLResponse)
@@ -272,6 +209,84 @@ actor APIClient {
         do {
             return try decoder.decode(R.self, from: data)
         } catch {
+            throw APIRequestError.decoding(error)
+        }
+    }
+
+    private func perform(
+        _ method: HTTPMethod,
+        path: String,
+        queryItems: [URLQueryItem]?,
+        body: Encodable?,
+        retryingAfterRefresh: Bool = false
+    ) async throws -> Data {
+        let url = try makeURL(path: path, queryItems: queryItems)
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.httpMethod = method.rawValue
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+        applyCommonHeaders(to: &request)
+        if let body {
+            request.httpBody = try APIClientCodec.encodeJSONRequestBody(body)
+        }
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw APIRequestError.transport(error, attemptedURL: url)
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIRequestError.invalidResponse }
+
+        if http.statusCode == 401, !retryingAfterRefresh, shouldAttemptRefresh(for: path) {
+            try await refreshAccessToken()
+            return try await perform(method, path: path, queryItems: queryItems, body: body, retryingAfterRefresh: true)
+        }
+
+        guard (200 ... 299).contains(http.statusCode) else {
+            let text = String(data: data, encoding: .utf8)
+            throw APIRequestError.httpStatus(code: http.statusCode, body: text)
+        }
+        return data
+    }
+
+    private func makeURL(path: String, queryItems: [URLQueryItem]?) throws -> URL {
+        try AppConfiguration.validateAPIBaseIsSecureForRequests()
+        var components = URLComponents(url: AppConfiguration.apiRootURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)
+        components?.queryItems = queryItems?.filter { !($0.value ?? "").isEmpty }
+        guard let url = components?.url else { throw APIRequestError.invalidURL }
+        return url
+    }
+
+    private func applyCommonHeaders(to request: inout URLRequest) {
+        request.setValue("ConstructionDashboard-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
+        if let token = AuthTokenStore.accessToken, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+    }
+
+    private func shouldAttemptRefresh(for path: String) -> Bool {
+        !path.hasPrefix("auth/login") && !path.hasPrefix("auth/refresh")
+    }
+
+    private func refreshAccessToken() async throws {
+        guard let refreshToken = AuthTokenStore.refreshToken, !refreshToken.isEmpty else {
+            throw APIRequestError.httpStatus(code: 401, body: nil)
+        }
+        let data = try await perform(
+            .POST,
+            path: "auth/refresh",
+            queryItems: nil,
+            body: RefreshTokenRequestBody(refreshToken: refreshToken),
+            retryingAfterRefresh: true
+        )
+        do {
+            let envelope = try decoder.decode(APIDataEnvelope<RefreshTokenResponseDto>.self, from: data)
+            AuthTokenStore.save(accessToken: envelope.data.accessToken, refreshToken: envelope.data.refreshToken)
+        } catch {
+            AuthTokenStore.clear()
             throw APIRequestError.decoding(error)
         }
     }

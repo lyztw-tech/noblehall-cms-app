@@ -2,11 +2,12 @@ import Foundation
 
 enum ProjectAPI: Sendable {
     static func projectDetail(projectCode: String, spaceId: String) async throws -> ProjectDetailDto {
-        try await APIClient.shared.send(
+        let envelope: APIDataEnvelope<ProjectDetailDto> = try await APIClient.shared.send(
             .GET,
             path: "projects/\(projectCode)",
             spaceId: spaceId
         )
+        return envelope.data
     }
 
     static func listProjects(spaceId: String, page: Int = 1, limit: Int = 100) async throws -> ProjectListResponseDto {

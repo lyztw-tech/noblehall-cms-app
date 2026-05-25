@@ -6,6 +6,7 @@ enum NotificationAPI: Sendable {
         let token: String
         let environment: String
         let bundleId: String
+        let deviceId: String?
         let appVersion: String
         let deviceName: String
     }
@@ -37,12 +38,12 @@ enum NotificationAPI: Sendable {
     }
 
     static func unreadCount(spaceId: String?) async throws -> Int {
-        let dto: UnreadCountDto = try await APIClient.shared.send(
+        let dto: APIDataEnvelope<UnreadCountDto> = try await APIClient.shared.send(
             .GET,
             path: "notifications/unread-count",
             spaceId: spaceId
         )
-        return dto.count
+        return dto.data.count
     }
 
     static func markRead(id: String, spaceId: String?) async throws {
@@ -54,34 +55,38 @@ enum NotificationAPI: Sendable {
     }
 
     static func markAllRead(spaceId: String?) async throws -> Int {
-        let dto: MarkAllReadResponseDto = try await APIClient.shared.send(
+        let dto: APIDataEnvelope<MarkAllReadResponseDto> = try await APIClient.shared.send(
             .PATCH,
             path: "notifications/read-all",
+            body: EmptyRequestBody(),
             spaceId: spaceId
         )
-        return dto.count
+        return dto.data.count
     }
 
     static func clearAll(spaceId: String?) async throws -> Int {
-        let dto: MarkAllReadResponseDto = try await APIClient.shared.send(
-            .DELETE,
-            path: "notifications",
+        let dto: APIDataEnvelope<MarkAllReadResponseDto> = try await APIClient.shared.send(
+            .PATCH,
+            path: "notifications/dismiss-all",
+            body: EmptyRequestBody(),
             spaceId: spaceId
         )
-        return dto.count
+        return dto.data.count
     }
 
     static func registerAPNsDeviceToken(_ token: String, spaceId: String?) async throws {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let deviceName = await MainActor.run { UIDevice.current.name }
+        let deviceId = await MainActor.run { UIDevice.current.identifierForVendor?.uuidString }
         try await APIClient.shared.sendVoid(
             .POST,
-            path: "notifications/apns-device-token",
+            path: "notifications/device-tokens/ios",
             body: APNsDeviceTokenBody(
                 token: trimmed,
                 environment: apnsEnvironment,
                 bundleId: AppMetadata.bundleIdentifier,
+                deviceId: deviceId,
                 appVersion: AppMetadata.version,
                 deviceName: deviceName
             ),

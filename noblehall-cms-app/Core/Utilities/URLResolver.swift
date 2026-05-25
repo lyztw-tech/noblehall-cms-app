@@ -15,6 +15,16 @@ enum URLResolver: Sendable {
 
         var base = apiRoot.absoluteString
         while base.hasSuffix("/") { base.removeLast() }
+        if let apiPath = apiRoot.path.nilIfBlank, path == apiPath || path.hasPrefix(apiPath + "/") {
+            path.removeFirst(apiPath.count)
+            if path.isEmpty { path = "/" }
+        }
         return URL(string: base + path)
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        isEmpty ? nil : self
     }
 }

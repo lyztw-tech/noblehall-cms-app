@@ -53,9 +53,6 @@ enum QualityTaskStatusStyle {
     }
 
     private static func normalize(_ raw: String?) -> String {
-        (raw ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
+        QualityTaskEditEligibility.normalizedStatus(raw)
     }
 }

@@ -447,7 +447,7 @@ struct MyTasksView: View {
 
     private func load(force _: Bool) async {
         guard let sid = session.spaceId else {
-            loadError = "缺少 Space（x-space-id），請重新登入。"
+            loadError = "缺少租戶資訊，請重新登入。"
             return
         }
         let executorFilter: String? = (listScope == .mineOnly) ? session.currentUser?.id : nil

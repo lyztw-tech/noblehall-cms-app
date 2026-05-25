@@ -66,7 +66,9 @@ enum NotificationLocalPush {
     }
 
     static func link(from userInfo: [AnyHashable: Any]) -> String? {
-        userInfo[linkUserInfoKey] as? String
+        (userInfo[linkUserInfoKey] as? String)
+            ?? (userInfo["linkMobile"] as? String)
+            ?? (userInfo["link"] as? String)
     }
 
     private static func registerForRemoteNotifications() async {

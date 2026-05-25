@@ -327,9 +327,7 @@ private struct CreateTaskFormSheet: View {
     @State private var description = ""
     @State private var priority = "medium"
     @State private var reviewerId = ""
-    @State private var executorKind: ExecutorKind = .none
     @State private var executorUserId = ""
-    @State private var executorGroupId = ""
     @State private var categoryId = ""
     @State private var dueDate = Date()
     @State private var includeDueDate = false
@@ -346,13 +344,6 @@ private struct CreateTaskFormSheet: View {
     @State private var submitSuccess: String?
     @State private var isLoadingMeta = true
     @State private var isSubmitting = false
-
-    private enum ExecutorKind: String, CaseIterable, Identifiable {
-        case none = "不指定"
-        case user = "個人"
-        case group = "群組"
-        var id: String { rawValue }
-    }
 
     private var isHouseholdPoint: Bool {
         point.id.hasPrefix(addTaskHouseholdPointIdPrefix)
@@ -380,10 +371,6 @@ private struct CreateTaskFormSheet: View {
 
     private var reviewerOptions: [ProjectMemberDto] {
         members
-    }
-
-    private var groupsWithOwner: [ProjectGroupDto] {
-        groups.filter { $0.ownerId != nil }
     }
 
     var body: some View {
@@ -425,24 +412,10 @@ private struct CreateTaskFormSheet: View {
                             Text(m.user.displayName ?? m.user.username ?? m.user.id).tag(m.user.id)
                         }
                     }
-                    Picker("執行對象", selection: $executorKind) {
-                        ForEach(ExecutorKind.allCases) { k in
-                            Text(k.rawValue).tag(k)
-                        }
-                    }
-                    if executorKind == .user {
-                        Picker("執行人（工地人員）", selection: $executorUserId) {
-                            Text("請選擇").tag("")
-                            ForEach(siteStaffMembers, id: \.user.id) { m in
-                                Text(m.user.displayName ?? m.user.username ?? m.user.id).tag(m.user.id)
-                            }
-                        }
-                    } else if executorKind == .group {
-                        Picker("執行群組", selection: $executorGroupId) {
-                            Text("請選擇").tag("")
-                            ForEach(groupsWithOwner) { g in
-                                Text(g.name).tag(g.id)
-                            }
+                    Picker("執行人", selection: $executorUserId) {
+                        Text("請選擇").tag("")
+                        ForEach(siteStaffMembers, id: \.user.id) { m in
+                            Text(m.user.displayName ?? m.user.username ?? m.user.id).tag(m.user.id)
                         }
                     }
                 }
@@ -569,27 +542,6 @@ private struct CreateTaskFormSheet: View {
             return
         }
 
-        var execId: String?
-        var execType: String?
-        switch executorKind {
-        case .none:
-            break
-        case .user:
-            guard !executorUserId.isEmpty else {
-                submitError = "請選擇執行人。"
-                return
-            }
-            execId = executorUserId
-            execType = "user"
-        case .group:
-            guard !executorGroupId.isEmpty else {
-                submitError = "請選擇執行群組。"
-                return
-            }
-            execId = executorGroupId
-            execType = "group"
-        }
-
         var dueISO: String?
         if includeDueDate {
             dueISO = ISO8601DateFormatter().string(from: dueDate)
@@ -603,8 +555,8 @@ private struct CreateTaskFormSheet: View {
             categoryId: categoryId.isEmpty ? nil : categoryId,
             groupId: resolvedGroupId,
             roomId: resolvedRoomId,
-            executorId: execId,
-            executorType: execType,
+            executorId: executorUserId.isEmpty ? nil : executorUserId,
+            executorType: executorUserId.isEmpty ? nil : "user",
             reviewerId: reviewerId,
             priority: priority,
             dueDate: dueISO

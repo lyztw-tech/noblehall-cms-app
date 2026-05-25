@@ -10,7 +10,7 @@ struct NotificationSSEEvent: Sendable {
     let kind: Kind
 }
 
-/// 與 Web `EventSource(/notifications/stream)` 相同：Cookie Session + `x-space-id`（HTTP SSE）。
+/// Construction Dashboard MVP 沒有通知 SSE；保留型別相容，實際更新由 `NotificationInboxStore` 輪詢。
 actor NotificationSSEClient {
     static let shared = NotificationSSEClient()
 
@@ -19,11 +19,7 @@ actor NotificationSSEClient {
 
     func start(spaceId: String, onEvent: @escaping @MainActor (NotificationSSEEvent) async -> Void) {
         stop()
-        generation &+= 1
-        let gen = generation
-        task = Task {
-            await runLoop(spaceId: spaceId, generation: gen, onEvent: onEvent)
-        }
+        _ = (spaceId, onEvent)
     }
 
     func stop() {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// 解析後端通知 `link`（與 Web 相同：`/projects/{code}/quality/drawings/{id}?openTaskId=…`）。
+/// 解析後端通知 `link`（Construction mobile: `constructionapp://projects/{projectId}/quality/tasks/{taskId}`）。
 struct NotificationDeepLink: Sendable, Equatable {
     let projectCode: String
     let qualityDrawingId: String?
@@ -16,7 +16,10 @@ struct NotificationDeepLink: Sendable, Equatable {
         guard let link, !link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
 
         let pathAndQuery: String
-        if link.hasPrefix("http://") || link.hasPrefix("https://") {
+        if link.hasPrefix("constructionapp://"), let url = URL(string: link) {
+            let host = url.host.map { "/\($0)" } ?? ""
+            pathAndQuery = host + url.path + (url.query.map { "?\($0)" } ?? "")
+        } else if link.hasPrefix("http://") || link.hasPrefix("https://") {
             guard let url = URL(string: link) else { return nil }
             pathAndQuery = url.path + (url.query.map { "?\($0)" } ?? "")
         } else {
@@ -29,6 +32,18 @@ struct NotificationDeepLink: Sendable, Equatable {
 
         // /projects/:projectCode/quality/task-management/:taskId
         let segments = path.split(separator: "/").map(String.init)
+        // constructionapp://projects/:projectId/quality/tasks/:taskId
+        // /p/:projectId/quality/tasks/:taskId
+        if segments.count >= 5,
+           (segments[0] == "projects" || segments[0] == "p"),
+           segments[2] == "quality",
+           segments[3] == "tasks" {
+            let projectCode = segments[1]
+            let taskId = segments[4].removingPercentEncoding ?? segments[4]
+            guard !taskId.isEmpty else { return nil }
+            return NotificationDeepLink(projectCode: projectCode, qualityDrawingId: nil, openTaskId: taskId)
+        }
+
         if segments.count >= 5,
            segments[0] == "projects",
            segments[2] == "quality",

@@ -6,10 +6,18 @@ enum QualityTaskEditEligibility {
     static let basicInfoFullEditWindowDays = 3
 
     static func normalizedStatus(_ raw: String?) -> String {
-        (raw ?? "")
+        let normalized = (raw ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "-", with: "_")
+        switch normalized {
+        case "unassigned": return "pending_assignment"
+        case "pending_owner_confirmation": return "director_check"
+        case "pending_review": return "in_review"
+        case "returned": return "rejected"
+        case "completed": return "approved"
+        default: return normalized
+        }
     }
 
     /// 與 Web 任務管理詳情 `allowWorkbenchBasicInfoEdit`：進入審核／負責人確認／已完成後不可再編輯基本資料。

@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import UserNotifications
 
-/// 通知收件匣（與 Web `app-notification` store 對齊）：列表、未讀、SSE、已讀。
+/// 通知收件匣（與 Web `app-notification` store 對齊）：列表、未讀、輪詢、已讀。
 @MainActor
 @Observable
 final class NotificationInboxStore {
@@ -23,7 +23,6 @@ final class NotificationInboxStore {
     private var session: SessionStore?
     private var pollingTask: Task<Void, Never>?
     private var hasLoadedInboxOnce = false
-    private var connectedSpaceId: String?
     private var lastUnreadForPushCompare = 0
     private var hasEstablishedUnreadBaseline = false
 
@@ -39,7 +38,6 @@ final class NotificationInboxStore {
         Task {
             isPushAuthorized = await NotificationLocalPush.requestAuthorizationIfNeeded()
             await syncFromServer()
-            restartSSE(spaceId: spaceId)
             startPolling()
         }
     }
@@ -47,10 +45,8 @@ final class NotificationInboxStore {
     func stop() {
         pollingTask?.cancel()
         pollingTask = nil
-        connectedSpaceId = nil
         lastUnreadForPushCompare = 0
         hasEstablishedUnreadBaseline = false
-        Task { await NotificationSSEClient.shared.stop() }
         items = []
         unreadCount = 0
         page = 1
@@ -179,33 +175,6 @@ final class NotificationInboxStore {
 
     func handleDeepLinkString(_ link: String) -> NotificationDeepLink? {
         NotificationDeepLink.parse(link: link)
-    }
-
-    private func restartSSE(spaceId: String) {
-        Task { await NotificationSSEClient.shared.stop() }
-        connectedSpaceId = spaceId
-        Task {
-            await NotificationSSEClient.shared.start(spaceId: spaceId) { [weak self] event in
-                await self?.handleSSE(event)
-            }
-        }
-    }
-
-    private func handleSSE(_ event: NotificationSSEEvent) async {
-        switch event.kind {
-        case .new(_, _, _):
-            await refreshUnreadCount()
-            if hasLoadedInboxOnce {
-                await fetchInbox(reset: true)
-            }
-        case .readUpdate:
-            await refreshUnreadCount()
-            if hasLoadedInboxOnce {
-                await fetchInbox(reset: true)
-            }
-        case .unknown:
-            await refreshUnreadCount()
-        }
     }
 
     private func startPolling() {

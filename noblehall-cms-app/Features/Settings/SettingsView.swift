@@ -20,8 +20,8 @@ struct SettingsView: View {
                     if let u = session.currentUser {
                         LabeledContent("顯示名稱", value: u.displayName)
                         LabeledContent("帳號", value: u.username)
-                        if let email = u.email, !email.isEmpty {
-                            LabeledContent("Email", value: email)
+                        if !u.email.isEmpty {
+                            LabeledContent("Email", value: u.email)
                         }
                     }
                 }

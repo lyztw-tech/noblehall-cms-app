@@ -1,21 +1,44 @@
 import Foundation
 
-struct UserDto: Codable, Sendable, Identifiable {
+nonisolated struct UserDto: Codable, Sendable, Identifiable {
     let id: String
-    let username: String
-    let displayName: String
-    let email: String?
-    let phone: String?
-    let permissions: [String]?
-    let role: String?
-    let spaceId: String?
-    let isSystemAdmin: Bool?
-    let mustChangePassword: Bool?
-    /// `GET /auth/me` 未帶 `x-space-id` 時回傳，供選定 Space。
-    let spaceIds: [String]?
+    let email: String
+    let name: String
+    let hasAvatar: Bool?
+    let systemRole: String
+    let tenantId: String?
+
+    var username: String { email }
+    var displayName: String { name }
+    var phone: String? { nil }
+    var permissions: [String]? { nil }
+    var role: String? { systemRole }
+    var spaceId: String? { tenantId }
+    var isSystemAdmin: Bool? { systemRole == "platform_admin" }
+    var mustChangePassword: Bool? { false }
+    var spaceIds: [String]? { tenantId.map { [$0] } }
 }
 
-struct LoginRequestBody: Encodable, Sendable {
-    let username: String
+nonisolated struct LoginRequestBody: Encodable, Sendable {
+    let email: String
     let password: String
+}
+
+nonisolated struct LoginResponseDto: Codable, Sendable {
+    let accessToken: String
+    let refreshToken: String
+    let user: UserDto
+}
+
+nonisolated struct RefreshTokenRequestBody: Encodable, Sendable {
+    let refreshToken: String
+}
+
+nonisolated struct RefreshTokenResponseDto: Codable, Sendable {
+    let accessToken: String
+    let refreshToken: String
+}
+
+nonisolated struct APIDataEnvelope<T: Decodable>: Decodable {
+    let data: T
 }

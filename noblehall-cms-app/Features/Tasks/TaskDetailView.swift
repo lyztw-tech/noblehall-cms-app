@@ -1829,6 +1829,12 @@ private struct QualityTaskFloorPlanZoomPanView: View {
 
     /// 將後端／Web 畫布座標換算為在 `fitted` 內的 0…1 比例（相對於顯示用 `image.size`）。
     private func markerNormalizedFractions(marker: TaskSpaceMarker) -> (CGFloat, CGFloat) {
+        // Construction Dashboard stores floor-plan positions as normalized 0...1 ratios.
+        if (0 ... 1).contains(marker.x), (0 ... 1).contains(marker.y) {
+            return (CGFloat(marker.x), CGFloat(marker.y))
+        }
+
+        // Older NobleHall tasks used pixel coordinates relative to the source plan image.
         let rw = markerReferenceSize.width
         let rh = markerReferenceSize.height
         guard rw > 0, rh > 0 else { return (0, 0) }
@@ -2005,7 +2011,7 @@ private struct QualityTaskPlanInteractionOverlay: UIViewRepresentable {
     }
 }
 
-/// 後端 `GET /files/...` 在 `requireSpaceMember` 之下，**必須**帶 `x-space-id`；`AsyncImage` 不會帶自訂 header，載入必定失敗。
+/// 後端 `GET /files/...` 需要 Authorization header；`AsyncImage` 不會帶自訂 header，載入必定失敗。
 /// 主 URL 若 404 或解碼失敗（例如縮圖尚未產生），會依序改試 `fallbackURL`。
 private struct SpaceAuthenticatedImageView: View {
     let projectCode: String

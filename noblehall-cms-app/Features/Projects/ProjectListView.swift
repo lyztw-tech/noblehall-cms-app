@@ -36,7 +36,7 @@ struct ProjectListView: View {
                         Section {
                             ForEach(projects) { project in
                                 Button {
-                                    session.setSelectedProject(code: project.code)
+                                    session.setSelectedProject(code: project.id)
                                 } label: {
                                     ProjectRow(project: project)
                                 }

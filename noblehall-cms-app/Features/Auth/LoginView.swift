@@ -2,7 +2,7 @@ import SwiftUI
 
 struct LoginView: View {
     @Environment(SessionStore.self) private var session
-    @State private var username = ""
+    @State private var email = ""
     @State private var password = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -30,11 +30,12 @@ struct LoginView: View {
 
             VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("帳號")
+                            Text("Email")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(NobleHallTheme.ink)
-                            TextField("請輸入帳號", text: $username)
-                                .textContentType(.username)
+                            TextField("請輸入 Email", text: $email)
+                                .textContentType(.emailAddress)
+                                .keyboardType(.emailAddress)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .padding(14)
@@ -78,8 +79,8 @@ struct LoginView: View {
                             }
                         }
                         .buttonStyle(NobleHallPrimaryButtonStyle())
-                        .disabled(username.isEmpty || password.isEmpty || isLoading)
-                        .opacity(username.isEmpty || password.isEmpty ? 0.55 : 1)
+                        .disabled(email.isEmpty || password.isEmpty || isLoading)
+                        .opacity(email.isEmpty || password.isEmpty ? 0.55 : 1)
                     }
                     .padding(20)
                     .nobleHallCard()
@@ -116,20 +117,10 @@ struct LoginView: View {
         Task {
             defer { isLoading = false }
             do {
-                let user = try await AuthAPI.login(username: username, password: password)
-                let spaceAfterApply = await MainActor.run { () -> String? in
+                let response = try await AuthAPI.login(email: email, password: password)
+                await MainActor.run {
                     password = ""
-                    session.applyLoginResponse(user)
-                    if session.spaceId == nil, let first = user.spaceIds?.first {
-                        session.setSpaceId(first)
-                    }
-                    return session.spaceId
-                }
-                if let sid = spaceAfterApply {
-                    let full = try await AuthAPI.fetchMe(spaceId: sid)
-                    await MainActor.run {
-                        session.applyLoginResponse(full)
-                    }
+                    session.applyLoginResponse(response)
                 }
             } catch {
                 errorMessage = error.userFacingMessage

@@ -3,18 +3,18 @@
 //  noblehall-cms-app
 //
 //  與 constructionApp 的 `AppConfiguration` 相同策略：環境變數優先、Debug 本機／區網 http、Release 強制 https。
-//  Noblehall CMS 後端 API root 為 **`/api`**（對齊 Web `VITE_API_BASE_URL` + `/api` 路由）。
+//  Construction Dashboard 後端 API root 為 **`/api/v1`**。
 //
 
 import Foundation
 
-/// API root（含路徑 **`/api`**），所有 `APIClient` 請求皆相對於此。
+/// API root（含路徑 **`/api/v1`**），所有 `APIClient` 請求皆相對於此。
 enum AppConfiguration: Sendable {
     /// DEBUG fallback；主要環境請從 Xcode `.xcconfig` 的 `API_BASE_URL` 注入。
-    private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.71:3000/api"
+    private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.71:3003/api/v1"
 
     /// Release fallback；正式上架前請改為實際正式網址，或使用 Production.xcconfig 注入。
-    private nonisolated static let productionAPIRootURLString = "https://api.example.com/api"
+    private nonisolated static let productionAPIRootURLString = "https://api.example.com/api/v1"
 
     /// 1. Scheme 環境變數 `API_BASE_URL`（方便臨時覆蓋）
     /// 2. Info.plist `API_BASE_URL`（由 `.xcconfig` 注入，正式管理方式）
@@ -49,7 +49,7 @@ enum AppConfiguration: Sendable {
         }()
     }
 
-    /// 不含 path 的 origin（例 `http://127.0.0.1:3000`），用於組 `/api/files/...` 等絕對 URL。
+    /// 不含 path 的 origin（例 `http://127.0.0.1:3003`），用於組 `/api/v1/files/...` 等絕對 URL。
     nonisolated static var serverOriginURL: URL {
         apiRootURL.deletingLastPathComponent()
     }
