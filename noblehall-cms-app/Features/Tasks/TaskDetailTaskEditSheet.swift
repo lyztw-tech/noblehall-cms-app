@@ -8,7 +8,7 @@ struct TaskDetailTaskEditSheet: View {
     let taskId: String
     let spaceId: String
     let initialTask: QualityTaskDto
-    /// 與 Web `basicInfoNonAssignmentFieldsLocked`：建立逾 3 日僅能改審查人等。
+    /// 與 Web assignment-only / `basicInfoNonAssignmentFieldsLocked` 對齊：僅能改審查人與執行對象。
     let assignmentFieldsOnly: Bool
     var onCancel: () -> Void
     var onSaved: () async -> Void
@@ -18,27 +18,30 @@ struct TaskDetailTaskEditSheet: View {
     @State private var name: String
     @State private var description: String
     @State private var priority: String
-    @State private var status: String
     @State private var includeDueDate: Bool
     @State private var dueDate: Date
     @State private var categoryId: String
     @State private var reviewerId: String
+    @State private var executorKind: ExecutorKind
+    @State private var executorUserId: String
+    @State private var executorGroupId: String
     @State private var formCacheLoaded = false
     @State private var categories: [DropdownOptionItemDto] = []
     @State private var members: [ProjectMemberDto] = []
+    @State private var groups: [ProjectGroupDto] = []
     @State private var saveError: String?
     @State private var isSaving = false
 
     private let initialHadDue: Bool
+    private static let maxNameLength = 20
+    private static let maxDescriptionLength = 100
 
-    private static let statusChoices: [(value: String, label: String)] = [
-        ("pending_assignment", "待指派"),
-        ("in_progress", "進行中"),
-        ("director_check", "負責人確認"),
-        ("in_review", "審查中"),
-        ("rejected", "已退回"),
-        ("approved", "已完成"),
-    ]
+    private enum ExecutorKind: String, CaseIterable, Identifiable {
+        case none = "未指派"
+        case user = "成員"
+        case group = "群組"
+        var id: String { rawValue }
+    }
 
     init(
         projectCode: String,
@@ -68,9 +71,6 @@ struct TaskDetailTaskEditSheet: View {
         let resolvedPriority = ["low", "medium", "high"].contains(pr) ? pr : "medium"
         _priority = State(initialValue: resolvedPriority)
 
-        let normalizedStatus = Self.normalizeStatus(initialTask.status)
-        _status = State(initialValue: normalizedStatus)
-
         let hadDue = initialTask.dueDate != nil
         initialHadDue = hadDue
         _includeDueDate = State(initialValue: hadDue)
@@ -78,6 +78,20 @@ struct TaskDetailTaskEditSheet: View {
 
         _categoryId = State(initialValue: initialTask.categoryId ?? "")
         _reviewerId = State(initialValue: initialTask.reviewer?.id ?? "")
+        let initialExecutorType = initialTask.executorType?.lowercased()
+        if initialExecutorType == "user", let id = initialTask.executorId, !id.isEmpty {
+            _executorKind = State(initialValue: .user)
+            _executorUserId = State(initialValue: id)
+            _executorGroupId = State(initialValue: "")
+        } else if initialExecutorType == "group", let id = initialTask.executorId, !id.isEmpty {
+            _executorKind = State(initialValue: .group)
+            _executorUserId = State(initialValue: "")
+            _executorGroupId = State(initialValue: id)
+        } else {
+            _executorKind = State(initialValue: .none)
+            _executorUserId = State(initialValue: "")
+            _executorGroupId = State(initialValue: "")
+        }
     }
 
     var body: some View {
@@ -93,7 +107,7 @@ struct TaskDetailTaskEditSheet: View {
                 if assignmentFieldsOnly {
                     Section {
                         Text(
-                            "任務建立已超過三天，僅能修改審查人；執行對象請至網頁任務管理調整。其他欄位已鎖定。"
+                            "目前僅能修改審查人與執行對象；其他欄位已鎖定。"
                         )
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -102,19 +116,19 @@ struct TaskDetailTaskEditSheet: View {
                 Section("任務內容") {
                     TextField("任務名稱", text: $name)
                         .disabled(assignmentFieldsOnly)
+                    Text("\(name.count)/\(Self.maxNameLength)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(name.count > Self.maxNameLength ? .red : .secondary)
                     TextField("說明", text: $description, axis: .vertical)
                         .lineLimit(3 ... 8)
                         .disabled(assignmentFieldsOnly)
+                    Text("\(description.count)/\(Self.maxDescriptionLength)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(description.count > Self.maxDescriptionLength ? .red : .secondary)
                     Picker("優先級", selection: $priority) {
                         Text("低").tag("low")
                         Text("中").tag("medium")
                         Text("高").tag("high")
-                    }
-                    .disabled(assignmentFieldsOnly)
-                    Picker("狀態", selection: $status) {
-                        ForEach(Self.statusChoices, id: \.value) { row in
-                            Text(row.label).tag(row.value)
-                        }
                     }
                     .disabled(assignmentFieldsOnly)
                 }
@@ -126,7 +140,7 @@ struct TaskDetailTaskEditSheet: View {
                             .disabled(assignmentFieldsOnly)
                     }
                 }
-                if formCacheLoaded && (!categories.isEmpty || !members.isEmpty) {
+                if formCacheLoaded && (!categories.isEmpty || !members.isEmpty || !groups.isEmpty) {
                     Section("分類與審查") {
                         if !categories.isEmpty {
                             Picker("類別", selection: $categoryId) {
@@ -137,22 +151,50 @@ struct TaskDetailTaskEditSheet: View {
                             }
                             .disabled(assignmentFieldsOnly)
                         }
-                        if !members.isEmpty {
-                            Picker("審查人", selection: $reviewerId) {
-                                Text("（不選）").tag("")
-                                ForEach(members) { m in
-                                    Text(m.user.displayName ?? m.user.username ?? m.user.id)
-                                        .tag(m.user.id)
+                        Picker("審查人 *", selection: $reviewerId) {
+                            Text("請選擇").tag("")
+                            ForEach(reviewerOptions, id: \.user.id) { m in
+                                Text(memberLabel(m))
+                                    .tag(m.user.id)
+                            }
+                        }
+                    }
+                    Section {
+                        Picker("執行對象", selection: $executorKind) {
+                            ForEach(ExecutorKind.allCases) { kind in
+                                Text(kind.rawValue).tag(kind)
+                            }
+                        }
+                        .onChange(of: executorKind) { _, newValue in
+                            if newValue != .user { executorUserId = "" }
+                            if newValue != .group { executorGroupId = "" }
+                        }
+                        if executorKind == .user {
+                            Picker("執行人（工地人員）", selection: $executorUserId) {
+                                Text("請選擇").tag("")
+                                ForEach(siteStaffMembers, id: \.user.id) { m in
+                                    Text(memberLabel(m)).tag(m.user.id)
+                                }
+                            }
+                        } else if executorKind == .group {
+                            Picker("執行群組", selection: $executorGroupId) {
+                                Text("請選擇").tag("")
+                                ForEach(groupsWithOwner) { g in
+                                    Text(g.name).tag(g.id)
                                 }
                             }
                         }
+                    } header: {
+                        Text("執行對象")
+                    } footer: {
+                        Text("執行人僅可選「工地人員」；執行群組僅顯示已有負責人的群組。")
                     }
                 } else if formCacheLoaded {
                     Section {
                         Text(
                             assignmentFieldsOnly
-                                ? "快取中尚無專案成員，無法變更審查人。請稍後再試或至網頁任務管理處理。"
-                                : "快取中尚無可選的類別或專案成員，無法在此變更審查人或類別。"
+                                ? "快取中尚無專案成員或群組，無法變更審查人與執行對象。請稍後再試或至網頁任務管理處理。"
+                                : "快取中尚無可選的類別、專案成員或群組，無法在此變更完整任務資料。"
                         )
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -161,8 +203,8 @@ struct TaskDetailTaskEditSheet: View {
                     Section {
                         Text(
                             assignmentFieldsOnly
-                                ? "未載入成員／類別快取：目前無法變更審查人。請連線後建立任務或稍後再試以載入成員列表。"
-                                : "未載入成員／類別快取：僅可編輯名稱、說明、優先級、狀態與到期日。建立任務或稍後再試可載入完整選項。"
+                                ? "未載入成員／群組快取：目前無法變更審查人與執行對象。請連線後稍後再試。"
+                                : "未載入成員／類別／群組快取：僅可編輯名稱、說明、優先級與到期日。建立任務或稍後再試可載入完整選項。"
                         )
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -183,6 +225,9 @@ struct TaskDetailTaskEditSheet: View {
                     .disabled(
                         isSaving
                             || (!assignmentFieldsOnly && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            || name.count > Self.maxNameLength
+                            || description.count > Self.maxDescriptionLength
+                            || reviewerId.isEmpty
                     )
                 }
             }
@@ -192,14 +237,20 @@ struct TaskDetailTaskEditSheet: View {
         }
     }
 
-    private static func normalizeStatus(_ raw: String?) -> String {
-        let normalized = (raw ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-        let allowed = Set(statusChoices.map(\.value))
-        if allowed.contains(normalized) { return normalized }
-        return "pending_assignment"
+    private var reviewerOptions: [ProjectMemberDto] {
+        members
+    }
+
+    private var siteStaffMembers: [ProjectMemberDto] {
+        members.filter { $0.memberCategory == "site" }
+    }
+
+    private var groupsWithOwner: [ProjectGroupDto] {
+        groups.filter { $0.ownerId != nil }
+    }
+
+    private func memberLabel(_ member: ProjectMemberDto) -> String {
+        member.user.displayName ?? member.user.username ?? member.user.id
     }
 
     @MainActor
@@ -207,6 +258,7 @@ struct TaskDetailTaskEditSheet: View {
         if let cached = try? AddTaskFormCache.load(projectCode: projectCode, context: modelContext) {
             categories = cached.categories
             members = cached.members
+            groups = cached.groups
             formCacheLoaded = true
             return
         }
@@ -215,6 +267,7 @@ struct TaskDetailTaskEditSheet: View {
             if let cached = try? AddTaskFormCache.load(projectCode: projectCode, context: modelContext) {
                 categories = cached.categories
                 members = cached.members
+                groups = cached.groups
             }
             formCacheLoaded = true
         } catch {
@@ -229,6 +282,38 @@ struct TaskDetailTaskEditSheet: View {
         if !assignmentFieldsOnly {
             guard !trimmedName.isEmpty else {
                 saveError = "任務名稱不能為空。"
+                return
+            }
+            guard trimmedName.count <= Self.maxNameLength else {
+                saveError = "任務名稱最多只能 \(Self.maxNameLength) 個字。"
+                return
+            }
+            guard description.count <= Self.maxDescriptionLength else {
+                saveError = "描述最多只能 \(Self.maxDescriptionLength) 個字。"
+                return
+            }
+        }
+        guard !reviewerId.isEmpty else {
+            saveError = "請選擇審查人員。"
+            return
+        }
+        if executorKind == .user {
+            guard !executorUserId.isEmpty else {
+                saveError = "請選擇執行人。"
+                return
+            }
+            guard siteStaffMembers.contains(where: { $0.user.id == executorUserId }) else {
+                saveError = "執行人須為分類「工地人員」的專案成員。"
+                return
+            }
+        }
+        if executorKind == .group {
+            guard !executorGroupId.isEmpty else {
+                saveError = "請選擇執行群組。"
+                return
+            }
+            guard groupsWithOwner.contains(where: { $0.id == executorGroupId }) else {
+                saveError = "執行群組須有負責人，請重新選擇。"
                 return
             }
         }
@@ -257,26 +342,44 @@ struct TaskDetailTaskEditSheet: View {
 
         let includeCategoryId = !assignmentFieldsOnly && formCacheLoaded && !categories.isEmpty
         let includeReviewerId = formCacheLoaded && !members.isEmpty
+        let includeExecutorFields = formCacheLoaded && (!members.isEmpty || !groups.isEmpty)
 
-        if assignmentFieldsOnly, !includeReviewerId {
+        if !includeReviewerId {
             saveError = "請連線並載入專案成員列表後，才能變更審查人。"
+            return
+        }
+        if !includeExecutorFields {
+            saveError = "請連線並載入專案成員或群組列表後，才能變更執行對象。"
             return
         }
 
         let effectiveName = assignmentFieldsOnly ? initialTask.name : trimmedName
+        let trimmedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let executorPayload: (id: String, type: String?) = {
+            switch executorKind {
+            case .none:
+                return ("", nil)
+            case .user:
+                return (executorUserId, "user")
+            case .group:
+                return (executorGroupId, "group")
+            }
+        }()
 
         let body = UpdateQualityTaskBody(
             includeCoreTaskFields: includeCoreTaskFields,
             name: effectiveName,
-            description: description,
+            description: trimmedDescription,
             priority: priority,
-            status: status,
             includeDueDateInPayload: includeDueDateInPayload,
             dueDate: dueISO,
             includeCategoryId: includeCategoryId,
             includeReviewerId: includeReviewerId,
+            includeExecutorFields: includeExecutorFields,
             categoryId: categoryId,
-            reviewerId: reviewerId
+            reviewerId: reviewerId,
+            executorId: executorPayload.id,
+            executorType: executorPayload.type
         )
 
         isSaving = true

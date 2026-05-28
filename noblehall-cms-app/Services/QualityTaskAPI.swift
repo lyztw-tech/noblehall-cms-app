@@ -115,7 +115,10 @@ enum QualityTaskAPI: Sendable {
             return nil
         }()
         let search = filter?.search.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fmt = TaskManagementFilterStore.isoDateOnlyFormatter
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = TimeZone.current
+        fmt.dateFormat = "yyyy-MM-dd"
         while true {
             let res = try await listProjectTasks(
                 projectCode: projectCode,

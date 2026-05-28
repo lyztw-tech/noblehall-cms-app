@@ -8,12 +8,6 @@ private struct MyTasksHeaderChromeHeightKey: PreferenceKey {
     }
 }
 
-private enum TaskListScope: String, CaseIterable, Identifiable {
-    case all = "全部"
-    case mineOnly = "指派給我"
-    var id: String { rawValue }
-}
-
 struct MyTasksView: View {
     let projectCode: String
     @Environment(SessionStore.self) private var session
@@ -27,8 +21,6 @@ struct MyTasksView: View {
     @State private var loadError: String?
     @State private var isLoading = false
     @State private var selectedRoute: TaskRoute?
-    /// 與 Web 任務管理總表對齊：預設「全部」；「指派給我」僅限執行對象為**個人**且 executorId 為本人（不含群組執行）。
-    @State private var listScope: TaskListScope = .all
     @State private var statusTab: QualityTaskStatusTab = .inProgress
     @State private var filterStore = TaskManagementFilterStore()
     @State private var showFilter = false
@@ -48,18 +40,12 @@ struct MyTasksView: View {
         )
     }
 
-    private var pendingRowsForScope: [PendingTaskCreateOutbox] {
-        let uid = session.currentUser?.id
-        return pendingCreates.filter { row in
-            if listScope == .mineOnly {
-                return TaskCreateOutbox.pendingMatchesMineOnlyRow(row, userId: uid)
-            }
-            return true
-        }
+    private var pendingRows: [PendingTaskCreateOutbox] {
+        pendingCreates
     }
 
     private var pendingAsListItems: [QualityTaskListItemDto] {
-        pendingRowsForScope.map { TaskCreateOutbox.asListItem($0) }
+        pendingRows.map { TaskCreateOutbox.asListItem($0) }
     }
 
     /// 離線佇列列在最前，與已同步列表合併。
@@ -80,7 +66,7 @@ struct MyTasksView: View {
 
         switch tab {
         case .pendingAssignment:
-            return normalizedStatus == "pending_assignment" && canAssignQualityTasks
+            return normalizedStatus == "pending_assignment"
         case .inReview:
             if normalizedStatus == "in_review" {
                 guard let userId, !userId.isEmpty else { return false }
@@ -96,28 +82,13 @@ struct MyTasksView: View {
         }
     }
 
-    private var canAssignQualityTasks: Bool {
-        hasPermission(resource: "quality_task", action: "assign")
-            || hasPermission(resource: "quality_task_management", action: "assign")
-            || hasPermission(resource: "quality_task", action: "update")
-    }
-
-    private func hasPermission(resource: String, action: String) -> Bool {
-        guard let permissions = session.currentUser?.permissions else { return false }
-        return permissions.contains { raw in
-            let parts = raw.lowercased().split(separator: ":").map(String.init)
-            guard parts.count >= 2 else { return false }
-            return parts[0] == resource && parts[1] == action
-        }
-    }
-
     /// 目前選取之狀態分頁的任務（供空狀態 overlay 等使用）。
     private var currentTabTasks: [QualityTaskListItemDto] {
         tasksMatching(statusTab)
     }
 
     private func countForStatusTab(_ tab: QualityTaskStatusTab) -> Int {
-        mergedTasks.filter { tab.matches(status: $0.status) }.count
+        tasksMatching(tab).count
     }
 
     private func groupedSections(for tab: QualityTaskStatusTab) -> [(key: String, title: String, tasks: [QualityTaskListItemDto])] {
@@ -155,7 +126,7 @@ struct MyTasksView: View {
                                 task: t,
                                 showsDrawingAndStatus: false,
                                 showsPendingUploadIcon: t.id.hasPrefix("pending-"),
-                                showsExecutor: listScope == .all
+                                showsExecutor: true
                             )
                         }
                         .disabled(t.id.hasPrefix("pending-"))
@@ -203,33 +174,6 @@ struct MyTasksView: View {
             .toolbarBackground(NobleHallTheme.warmBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        ForEach(TaskListScope.allCases) { scope in
-                            Button {
-                                guard listScope != scope else { return }
-                                listScope = scope
-                                Task { await load(force: true) }
-                            } label: {
-                                HStack {
-                                    Text(scope.rawValue)
-                                    Spacer(minLength: 8)
-                                    if listScope == scope {
-                                        Image(systemName: "checkmark")
-                                            .font(.subheadline.weight(.semibold))
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text(listScope.rawValue)
-                            Image(systemName: "chevron.down")
-                                .font(.caption2.weight(.semibold))
-                        }
-                        .font(.subheadline.weight(.medium))
-                    }
-                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
                         showFilter = true
@@ -358,7 +302,6 @@ struct MyTasksView: View {
               focus.projectCode == projectCode
         else { return }
 
-        listScope = .all
         await load(force: true)
 
         var resolvedStatus: String?
@@ -440,7 +383,6 @@ struct MyTasksView: View {
 
     private var emptyStateDescription: String {
         var parts: [String] = ["已套用「\(statusTab.rawValue)」"]
-        if listScope == .mineOnly { parts.append("「指派給我」") }
         if filterStore.activeConditionCount > 0 { parts.append("進階篩選") }
         return parts.joined() + "，目前沒有符合的品質任務。"
     }
@@ -448,11 +390,6 @@ struct MyTasksView: View {
     private func load(force _: Bool) async {
         guard let sid = session.spaceId else {
             loadError = "缺少 Space（x-space-id），請重新登入。"
-            return
-        }
-        let executorFilter: String? = (listScope == .mineOnly) ? session.currentUser?.id : nil
-        if listScope == .mineOnly, executorFilter == nil {
-            loadError = "無法篩選「指派給我」：未取得使用者 id。"
             return
         }
         loadError = nil
@@ -469,7 +406,6 @@ struct MyTasksView: View {
                 projectCode: projectCode,
                 spaceId: sid,
                 filter: filterStore,
-                executorIds: executorFilter.map { [$0] },
                 onlyMyTasks: true
             )
             let visible = await filterActionableMyTasks(loaded, spaceId: sid)
@@ -493,9 +429,7 @@ struct MyTasksView: View {
             let status = QualityTaskEditEligibility.normalizedStatus(row.status)
             switch status {
             case "pending_assignment":
-                if canAssignQualityTasks {
-                    output.append(row)
-                }
+                output.append(row)
             case "in_review":
                 if let userId, !userId.isEmpty, row.reviewer?.id == userId {
                     output.append(row)

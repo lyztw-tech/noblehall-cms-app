@@ -43,15 +43,35 @@ enum QualityTaskEditEligibility {
     }
 
     /// 無法開啟「編輯任務」時的人類可讀原因（`nil` 表示可開啟）。
-    static func taskEditSheetBlockedReason(task: QualityTaskDto, userId: String?, isOnline: Bool, hasQualityDrawing: Bool) -> String? {
+    static func taskEditSheetBlockedReason(
+        task: QualityTaskDto,
+        userId: String?,
+        isOnline: Bool,
+        hasQualityDrawing: Bool,
+        hasAssignPermission: Bool,
+        hasUpdatePermission: Bool
+    ) -> String? {
         if !isOnline { return "離線時無法編輯任務。" }
         if !hasQualityDrawing { return "缺少品質圖面資訊，無法更新任務。" }
         if !allowsBasicInfoEdit(task: task) {
             return "任務已進入審核、負責人確認或已完成，無法編輯基本資料。"
         }
-        if !isCurrentUserCreator(task: task, userId: userId) {
-            return "僅限建立任務的人員可編輯。"
+        if isCurrentUserCreator(task: task, userId: userId) {
+            return hasUpdatePermission ? nil : "沒有修改品質任務的權限。"
         }
-        return nil
+        if task.reviewer?.id == userId, hasUpdatePermission { return nil }
+        if hasAssignPermission { return nil }
+        return "僅限建立者、審查人員或具指派權限的人員可編輯。"
+    }
+
+    static func assignmentFieldsOnly(
+        task: QualityTaskDto,
+        userId: String?,
+        hasAssignPermission: Bool
+    ) -> Bool {
+        if nonAssignmentFieldsLocked(task: task) { return true }
+        if !isCurrentUserCreator(task: task, userId: userId) { return true }
+        if hasAssignPermission, task.reviewer?.id != userId { return true }
+        return false
     }
 }

@@ -265,6 +265,8 @@ extension TaskLedgerPresentation {
 
 struct ViewerFlagsDto: Codable, Sendable {
     let isProjectOwner: Bool?
+    let canAssignQualityTask: Bool?
+    let canUpdateQualityTask: Bool?
 }
 
 // MARK: - Drawing & room points
@@ -396,25 +398,27 @@ typealias CreateQualityTaskResponseDto = QualityTaskDto
 
 /// PATCH `projects/:projectCode/quality-tasks/:taskId`（對齊後端 `updateQualityTaskSchema`）。
 struct UpdateQualityTaskBody: Encodable, Sendable {
-    /// 為 `false` 時不輸出 `name`／`description`／`priority`／`status`（建立逾 3 日僅改審查人等指派欄位時使用）。
+    /// 為 `false` 時不輸出 `name`／`description`／`priority`（建立逾 3 日僅改審查人／執行對象時使用）。
     let includeCoreTaskFields: Bool
     let name: String
     /// 可為空字串；與後端 `description` 字串欄位對齊。
     let description: String
     let priority: String
-    let status: String
     /// 為 `true` 時輸出 `dueDate` 鍵：有值為 ISO8601 字串，無值為 JSON `null`（清除到期日）。
     let includeDueDateInPayload: Bool
     let dueDate: String?
     /// 分別控制；避免僅載入到成員列表卻用 `null` 誤清類別（或相反）。
     let includeCategoryId: Bool
     let includeReviewerId: Bool
+    let includeExecutorFields: Bool
     /// 空字串表示 JSON `null`（清除）；僅在對應 `include*` 為 `true` 時輸出鍵。
     let categoryId: String
     let reviewerId: String
+    let executorId: String
+    let executorType: String?
 
     enum CodingKeys: String, CodingKey {
-        case name, description, priority, status, dueDate, categoryId, reviewerId
+        case name, description, priority, dueDate, categoryId, reviewerId, executorId, executorType
     }
 
     func encode(to encoder: Encoder) throws {
@@ -423,7 +427,6 @@ struct UpdateQualityTaskBody: Encodable, Sendable {
             try c.encode(name, forKey: .name)
             try c.encode(description, forKey: .description)
             try c.encode(priority, forKey: .priority)
-            try c.encode(status, forKey: .status)
         }
         if includeDueDateInPayload {
             if let dueDate, !dueDate.isEmpty {
@@ -444,6 +447,15 @@ struct UpdateQualityTaskBody: Encodable, Sendable {
                 try c.encodeNil(forKey: .reviewerId)
             } else {
                 try c.encode(reviewerId, forKey: .reviewerId)
+            }
+        }
+        if includeExecutorFields {
+            if executorId.isEmpty || executorType == nil {
+                try c.encodeNil(forKey: .executorId)
+                try c.encodeNil(forKey: .executorType)
+            } else {
+                try c.encode(executorId, forKey: .executorId)
+                try c.encode(executorType, forKey: .executorType)
             }
         }
     }

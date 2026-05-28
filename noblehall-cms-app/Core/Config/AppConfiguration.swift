@@ -11,7 +11,7 @@ import Foundation
 /// API root（含路徑 **`/api`**），所有 `APIClient` 請求皆相對於此。
 enum AppConfiguration: Sendable {
     /// DEBUG fallback；主要環境請從 Xcode `.xcconfig` 的 `API_BASE_URL` 注入。
-    private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.71:3000/api"
+    private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.139:3000/api"
 
     /// Release fallback；正式上架前請改為實際正式網址，或使用 Production.xcconfig 注入。
     private nonisolated static let productionAPIRootURLString = "https://api.example.com/api"

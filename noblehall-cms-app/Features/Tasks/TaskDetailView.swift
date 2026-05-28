@@ -447,11 +447,16 @@ struct TaskDetailView: View {
                         taskId: taskId,
                         spaceId: sid,
                         initialTask: t,
-                        assignmentFieldsOnly: QualityTaskEditEligibility.nonAssignmentFieldsLocked(task: t),
+                        assignmentFieldsOnly: QualityTaskEditEligibility.assignmentFieldsOnly(
+                            task: t,
+                            userId: session.currentUser?.id,
+                            hasAssignPermission: canAssignQualityTask
+                        ),
                         onCancel: { showTaskEditSheet = false },
                         onSaved: {
                             showTaskEditSheet = false
                             await loadAll()
+                            await notifyTaskChanged()
                         }
                     )
                 } else {
@@ -583,7 +588,9 @@ struct TaskDetailView: View {
             task: t,
             userId: session.currentUser?.id,
             isOnline: network.isConnected,
-            hasQualityDrawing: hasQualityDrawingForEdit
+            hasQualityDrawing: hasQualityDrawingForEdit,
+            hasAssignPermission: canAssignQualityTask,
+            hasUpdatePermission: canUpdateQualityTask
         )
     }
 
@@ -591,8 +598,31 @@ struct TaskDetailView: View {
     private var taskEditLimitedToAssignmentHint: String? {
         guard let t = detail?.task else { return nil }
         guard taskEditBlockedReason == nil else { return nil }
-        guard QualityTaskEditEligibility.nonAssignmentFieldsLocked(task: t) else { return nil }
-        return "任務建立已超過三天，僅能修改審查人；執行對象請至網頁任務管理調整。"
+        let assignmentOnly = QualityTaskEditEligibility.assignmentFieldsOnly(
+            task: t,
+            userId: session.currentUser?.id,
+            hasAssignPermission: canAssignQualityTask
+        )
+        guard assignmentOnly else { return nil }
+        return "此任務目前僅能修改審查人與執行對象。"
+    }
+
+    private var canAssignQualityTask: Bool {
+        detail?.viewer?.canAssignQualityTask ?? hasQualityTaskManagementPermission("assign")
+    }
+
+    private var canUpdateQualityTask: Bool {
+        detail?.viewer?.canUpdateQualityTask ?? hasQualityTaskManagementPermission("update")
+    }
+
+    private func hasQualityTaskManagementPermission(_ action: String) -> Bool {
+        guard let permissions = session.currentUser?.permissions else { return false }
+        return permissions.contains { raw in
+            let parts = raw.lowercased().split(separator: ":").map(String.init)
+            guard parts.count >= 2 else { return false }
+            return (parts[0] == "quality_task_management" || parts[0] == "quality_task")
+                && parts[1] == action
+        }
     }
 
     private static func executorLabel(for task: QualityTaskDto) -> String {
@@ -860,29 +890,33 @@ struct TaskDetailView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
+                Spacer()
+
                 Button {
                     openReviewDraft(kind: kind, result: .rejected)
                 } label: {
                     Label("退回", systemImage: "arrow.uturn.backward.circle.fill")
-                        .frame(maxWidth: .infinity)
-                        .font(.headline.weight(.semibold))
-                        .padding(.vertical, 8)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.large)
+                .controlSize(.regular)
                 .tint(.red)
 
                 Button {
                     openReviewDraft(kind: kind, result: .approved)
                 } label: {
                     Label("通過", systemImage: "checkmark.circle.fill")
-                        .frame(maxWidth: .infinity)
-                        .font(.headline.weight(.semibold))
-                        .padding(.vertical, 8)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .controlSize(.regular)
+
+                Spacer()
             }
         }
         .padding(14)
