@@ -13,13 +13,19 @@ enum AppConfiguration: Sendable {
     /// DEBUG fallback；主要環境請從 Xcode `.xcconfig` 的 `API_BASE_URL` 注入。
     private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.71:3003/api/v1"
 
-    /// Release fallback；正式上架前請改為實際正式網址，或使用 Production.xcconfig 注入。
-    private nonisolated static let productionAPIRootURLString = "https://api.example.com/api/v1"
+    /// Release fallback；正式環境與 Production.xcconfig 使用同一個後端。
+    private nonisolated static let productionAPIRootURLString = "https://erp.shinefar.lyztw.com/api/v1"
 
     /// 1. Scheme 環境變數 `API_BASE_URL`（方便臨時覆蓋）
     /// 2. Info.plist `API_BASE_URL`（由 `.xcconfig` 注入，正式管理方式）
-    /// 3. 依 Debug／Release fallback
+    /// 3. 依 scheme compilation condition fallback（與施工紀錄 App 相同）
     nonisolated static var apiRootURL: URL {
+        let resolved = resolveAPIRootURL()
+        assertSafeBackend(resolved)
+        return resolved
+    }
+
+    private nonisolated static func resolveAPIRootURL() -> URL {
         if let raw = ProcessInfo.processInfo.environment["API_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !raw.isEmpty,
            let url = URL(string: raw)
@@ -31,20 +37,51 @@ enum AppConfiguration: Sendable {
         {
             return url
         }
+        #if NOBLEHALL_ALPHA
+        return URL(string: "https://alpha.erp.shinefar.lyztw.com/api/v1")!
+        #elseif NOBLEHALL_PRODUCTION
+        return URL(string: "https://erp.shinefar.lyztw.com/api/v1")!
+        #else
         #if DEBUG
         return URL(string: debugDefaultAPIRootURLString)!
         #else
         return URL(string: productionAPIRootURLString)!
+        #endif
+        #endif
+    }
+
+    /// Fail-safe：避免發版組建使用佔位網域或明文 http。
+    private nonisolated static func assertSafeBackend(_ url: URL) {
+        let host = url.host ?? ""
+        let isPlaceholder = host.contains("example.com")
+        let isInsecure = (url.scheme?.lowercased() != "https")
+        #if DEBUG
+        assert(!isPlaceholder, "API_BASE_URL 仍為佔位網域（example.com），發版前請於 xcconfig 設定真實後端 host")
+        #else
+        precondition(
+            !isPlaceholder,
+            "API_BASE_URL 仍為佔位網域（example.com），禁止以此設定發版；請於對應 xcconfig 設定真實後端 host"
+        )
+        precondition(
+            !isInsecure,
+            "Release 類組建的 API_BASE_URL 必須使用 https，目前為：\(url.absoluteString)"
+        )
         #endif
     }
 
     /// 目前 build 環境名稱（由 `.xcconfig` 注入）。
     nonisolated static var environmentName: String {
         bundledString(forInfoKey: "NOBLEHALL_ENVIRONMENT") ?? {
+            #if NOBLEHALL_ALPHA
+            return "Alpha"
+            #elseif NOBLEHALL_PRODUCTION
+            return "Production"
+            #else
             #if DEBUG
             return "Debug"
             #else
             return "Release"
+            #endif
             #endif
         }()
     }

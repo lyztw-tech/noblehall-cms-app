@@ -2,13 +2,14 @@ import Foundation
 
 nonisolated struct UserDto: Codable, Sendable, Identifiable {
     let id: String
-    let email: String
+    let account: String
+    let email: String?
     let name: String
     let hasAvatar: Bool?
     let systemRole: String
     let tenantId: String?
 
-    var username: String { email }
+    var username: String { account }
     var displayName: String { name }
     var phone: String? { nil }
     var permissions: [String]? { nil }
@@ -20,7 +21,7 @@ nonisolated struct UserDto: Codable, Sendable, Identifiable {
 }
 
 nonisolated struct LoginRequestBody: Encodable, Sendable {
-    let email: String
+    let account: String
     let password: String
 }
 

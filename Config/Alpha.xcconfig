@@ -1,7 +1,7 @@
 // Alpha environment.
 // NOTE: In xcconfig files, write URLs as `https:/$()/host/path` so `//` is not parsed as a comment.
 
-API_BASE_URL = http:/$()/192.168.0.72:3003/api/v1
+API_BASE_URL = https:/$()/alpha.erp.shinefar.lyztw.com/api/v1
 APP_DISPLAY_NAME = NobleHall Alpha
 APP_BUNDLE_IDENTIFIER = lyztw.noblehall-cms-app.alpha
 NOBLEHALL_ENVIRONMENT = Alpha

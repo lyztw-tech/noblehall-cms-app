@@ -1,11 +1,11 @@
 import Foundation
 
 enum AuthAPI: Sendable {
-    static func login(email: String, password: String) async throws -> LoginResponseDto {
+    static func login(account: String, password: String) async throws -> LoginResponseDto {
         let envelope: APIDataEnvelope<LoginResponseDto> = try await APIClient.shared.send(
             .POST,
             path: "auth/login",
-            body: LoginRequestBody(email: email, password: password),
+            body: LoginRequestBody(account: account, password: password),
             spaceId: nil
         )
         return envelope.data

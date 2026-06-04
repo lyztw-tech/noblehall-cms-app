@@ -261,6 +261,7 @@ struct AppRootView: View {
     @Environment(NotificationNavigationCoordinator.self) private var notificationNav
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @State private var appUpdateGate = AppUpdateGate()
     @State private var showLaunchSplash = true
     @State private var latestRemoteNotificationToken: String?
 
@@ -309,6 +310,15 @@ struct AppRootView: View {
                     .zIndex(10)
             }
         }
+        .overlay {
+            if let update = appUpdateGate.requiredUpdate {
+                RequiredAppUpdateView(update: update) {
+                    appUpdateGate.openAppStore()
+                }
+                .transition(.opacity)
+                .zIndex(20)
+            }
+        }
         .dismissKeyboardOnTapOutside()
         .animation(.easeInOut(duration: 0.2), value: session.isLoggedIn)
         .animation(.easeInOut(duration: 0.2), value: session.selectedProjectCode)
@@ -318,6 +328,7 @@ struct AppRootView: View {
             syncNotificationInboxLifecycle()
         }
         .task {
+            await appUpdateGate.checkForRequiredUpdate()
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             showLaunchSplash = false
         }
@@ -339,8 +350,11 @@ struct AppRootView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active, session.isLoggedIn else { return }
-            notificationInbox.startIfLoggedIn()
+            guard phase == .active else { return }
+            Task { await appUpdateGate.checkForRequiredUpdate() }
+            if session.isLoggedIn {
+                notificationInbox.startIfLoggedIn()
+            }
         }
         .task {
             await NetworkReconnectNotifier.requestAuthorizationIfNotDetermined()

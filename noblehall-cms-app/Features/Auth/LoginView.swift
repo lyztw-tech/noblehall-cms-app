@@ -2,7 +2,7 @@ import SwiftUI
 
 struct LoginView: View {
     @Environment(SessionStore.self) private var session
-    @State private var email = ""
+    @State private var account = ""
     @State private var password = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -30,12 +30,12 @@ struct LoginView: View {
 
             VStack(alignment: .leading, spacing: 18) {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Email")
+                            Text("帳號")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(NobleHallTheme.ink)
-                            TextField("請輸入 Email", text: $email)
-                                .textContentType(.emailAddress)
-                                .keyboardType(.emailAddress)
+                            TextField("請輸入帳號", text: $account)
+                                .textContentType(.username)
+                                .keyboardType(.default)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .padding(14)
@@ -79,8 +79,8 @@ struct LoginView: View {
                             }
                         }
                         .buttonStyle(NobleHallPrimaryButtonStyle())
-                        .disabled(email.isEmpty || password.isEmpty || isLoading)
-                        .opacity(email.isEmpty || password.isEmpty ? 0.55 : 1)
+                        .disabled(account.isEmpty || password.isEmpty || isLoading)
+                        .opacity(account.isEmpty || password.isEmpty ? 0.55 : 1)
                     }
                     .padding(20)
                     .nobleHallCard()
@@ -117,7 +117,7 @@ struct LoginView: View {
         Task {
             defer { isLoading = false }
             do {
-                let response = try await AuthAPI.login(email: email, password: password)
+                let response = try await AuthAPI.login(account: account, password: password)
                 await MainActor.run {
                     password = ""
                     session.applyLoginResponse(response)
