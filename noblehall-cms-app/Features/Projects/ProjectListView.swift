@@ -20,10 +20,10 @@ struct ProjectListView: View {
                         if !network.isConnected {
                             Section {
                                 HStack {
-                                    NobleHallOfflineTag(text: "快取專案")
+                                    AppOfflineTag(text: "快取專案")
                                     Spacer(minLength: 0)
                                 }
-                                .nobleHallOfflineListTagRow()
+                                .appOfflineListTagRow()
                             }
                         }
                         if let loadError {
@@ -36,7 +36,7 @@ struct ProjectListView: View {
                         Section {
                             ForEach(projects) { project in
                                 Button {
-                                    session.setSelectedProject(code: project.code)
+                                    session.setSelectedProject(code: project.id, name: project.name)
                                 } label: {
                                     ProjectRow(project: project)
                                 }
@@ -45,17 +45,17 @@ struct ProjectListView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
-                    .background(NobleHallTheme.warmBackground)
+                    .background(AppTheme.warmBackground)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .nobleHallScreen()
+            .appScreen()
             .navigationTitle("專案")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("登出") { Task { await logout() } }
-                        .foregroundStyle(NobleHallTheme.brandGold)
+                        .foregroundStyle(AppTheme.brandGold)
                 }
             }
             .refreshable { await load(force: true) }
@@ -70,31 +70,31 @@ struct ProjectListView: View {
             HStack(spacing: 14) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(NobleHallTheme.brandGold.opacity(0.12))
+                        .fill(AppTheme.brandGold.opacity(0.12))
                     Image(systemName: "building.2.fill")
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(NobleHallTheme.brandGold)
+                        .foregroundStyle(AppTheme.brandGold)
                 }
                 .frame(width: 44, height: 44)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(project.name)
                         .font(.headline.weight(.semibold))
-                        .foregroundStyle(NobleHallTheme.ink)
+                        .foregroundStyle(AppTheme.ink)
                     if !project.status.isEmpty {
-                        NobleHallStatusPill(title: project.status, systemImage: "checkmark.seal", tint: NobleHallTheme.success)
+                        AppStatusPill(title: project.status, systemImage: "checkmark.seal", tint: AppTheme.success)
                     }
                     if let address = project.address, !address.isEmpty {
                         Text(address)
                             .font(.caption)
-                            .foregroundStyle(NobleHallTheme.secondaryInk)
+                            .foregroundStyle(AppTheme.secondaryInk)
                             .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(NobleHallTheme.softGold)
+                    .foregroundStyle(AppTheme.softGold)
             }
             .padding(.vertical, 4)
             .contentShape(Rectangle())
@@ -102,7 +102,6 @@ struct ProjectListView: View {
     }
 
     private func load(force: Bool) async {
-        guard let sid = session.spaceId else { return }
         if !network.isConnected {
             if let cached = try? LocalTaskCache.cachedProjects(context: modelContext), !cached.isEmpty {
                 projects = cached.map {
@@ -115,7 +114,7 @@ struct ProjectListView: View {
         loadError = nil
         defer { isLoading = false }
         do {
-            let res = try await ProjectAPI.listProjects(spaceId: sid)
+            let res = try await ProjectAPI.listProjects()
             projects = res.data
             try LocalTaskCache.upsertProjects(res.data, context: modelContext)
             try modelContext.save()

@@ -71,8 +71,8 @@ enum LocalTaskCache {
     }
 
     static func saveDetail(_ dto: QualityTaskDetailResponseDto, projectCode: String, taskId: String, context: ModelContext) throws {
-        let data = try JSONEncoder.api.encode(dto)
-        try saveDetailJSON(projectCode: projectCode, taskId: taskId, data: data, context: context)
+        // Construction Dashboard MVP keeps detail caching read-only until the retargeted DTOs settle.
+        _ = (dto, projectCode, taskId, context)
     }
 
     static func loadDetail(projectCode: String, taskId: String, context: ModelContext) throws -> QualityTaskDetailResponseDto? {

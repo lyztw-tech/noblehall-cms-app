@@ -9,7 +9,7 @@ import UIKit
 
 @main
 struct noblehall_cms_appApp: App {
-    @UIApplicationDelegateAdaptor(NoblehallAppDelegate.self) private var appDelegate
+    @UIApplicationDelegateAdaptor(AppPushDelegate.self) private var appDelegate
 
     @State private var sessionStore = SessionStore()
     @State private var networkMonitor = NetworkPathMonitor()

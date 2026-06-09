@@ -43,7 +43,7 @@ struct MainTabView: View {
                 .tabItem { Label("設定", systemImage: "gearshape.fill") }
                 .tag(MainTabSelection.settings)
         }
-        .tint(NobleHallTheme.brandGold)
+        .tint(AppTheme.brandGold)
         .toolbarBackground(.hidden, for: .tabBar)
         .task {
             await inbox.syncFromServer()

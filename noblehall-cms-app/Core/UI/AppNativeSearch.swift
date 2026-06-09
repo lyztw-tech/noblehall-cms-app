@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 以 sheet 呈現之 iOS 原生搜尋（`searchable(isPresented:)`，搜尋列在鍵盤上方）。
-struct NobleHallNativeSearchScreen<Results: View>: View {
+struct AppNativeSearchScreen<Results: View>: View {
     @Binding var query: String
     let prompt: String
     let emptyTitle: String
@@ -32,7 +32,7 @@ struct NobleHallNativeSearchScreen<Results: View>: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .nobleHallScreen()
+        .appScreen()
         .navigationTitle("搜尋")
         .navigationBarTitleDisplayMode(.large)
         .searchable(text: $query, isPresented: $isSearchFieldPresented, prompt: prompt)

@@ -22,11 +22,11 @@ struct QualityTaskListRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(task.name ?? "未命名任務")
                         .font(.headline.weight(.semibold))
-                        .foregroundStyle(NobleHallTheme.ink)
+                        .foregroundStyle(AppTheme.ink)
                         .lineLimit(2)
                     if showsPendingUploadIcon {
                         Image(systemName: "icloud.and.arrow.up")
-                            .foregroundStyle(NobleHallTheme.warning)
+                            .foregroundStyle(AppTheme.warning)
                             .accessibilityLabel("待上傳")
                     }
                 }
@@ -34,17 +34,17 @@ struct QualityTaskListRow: View {
                 if let subtitle = Self.subtitle(for: task, showsPendingUploadIcon: showsPendingUploadIcon, showsExecutor: showsExecutor) {
                     Text(subtitle)
                         .font(.subheadline)
-                        .foregroundStyle(NobleHallTheme.secondaryInk)
+                        .foregroundStyle(AppTheme.secondaryInk)
                         .lineLimit(2)
                 }
                 if let created = task.createdAt {
                     HStack(spacing: 5) {
                         Image(systemName: "calendar.badge.clock")
                             .font(.caption2)
-                            .foregroundStyle(NobleHallTheme.secondaryInk.opacity(0.7))
+                            .foregroundStyle(AppTheme.secondaryInk.opacity(0.7))
                         Text(AppDateTimeFormat.fullDateTime(created))
                             .font(.caption2.monospacedDigit())
-                            .foregroundStyle(NobleHallTheme.secondaryInk.opacity(0.7))
+                            .foregroundStyle(AppTheme.secondaryInk.opacity(0.7))
                     }
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("建立時間 \(AppDateTimeFormat.fullDateTime(created))")
@@ -52,11 +52,11 @@ struct QualityTaskListRow: View {
                 if showsDrawingAndStatus {
                     HStack(spacing: 6) {
                         if let drawingName = task.qualityDrawing?.name, !drawingName.isEmpty {
-                            NobleHallStatusPill(title: drawingName, systemImage: "doc.text", tint: NobleHallTheme.brandGold)
+                            AppStatusPill(title: drawingName, systemImage: "doc.text", tint: AppTheme.brandGold)
                         }
                         if let status = task.status, !status.isEmpty {
                             let style = QualityTaskStatusStyle.colors(for: status)
-                            NobleHallStatusPill(
+                            AppStatusPill(
                                 title: QualityTaskStatusLabels.displayName(for: status),
                                 systemImage: "circle.fill",
                                 tint: style.foreground,

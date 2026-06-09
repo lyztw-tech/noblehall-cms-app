@@ -6,14 +6,14 @@ private enum TaskManagementFilterUI {
     static var checkmark: some View {
         Image(systemName: "checkmark")
             .font(.body.weight(.semibold))
-            .foregroundStyle(NobleHallTheme.brandGold)
+            .foregroundStyle(AppTheme.brandGold)
     }
 
     @ViewBuilder
     static func selectionRow(title: String, isSelected: Bool) -> some View {
         HStack {
             Text(title)
-                .foregroundStyle(NobleHallTheme.ink)
+                .foregroundStyle(AppTheme.ink)
             Spacer()
             if isSelected { checkmark }
         }
@@ -27,7 +27,6 @@ struct TaskManagementFilterRootView: View {
     @Bindable var store: TaskManagementFilterStore
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(SessionStore.self) private var session
 
     @State private var drawings: [QualityDrawingListItemDto] = []
     @State private var members: [ProjectMemberDto] = []
@@ -53,7 +52,7 @@ struct TaskManagementFilterRootView: View {
                     } label: {
                         HStack {
                             Text(field.title)
-                                .foregroundStyle(NobleHallTheme.ink)
+                                .foregroundStyle(AppTheme.ink)
                             Spacer()
                             Text(
                                 store.displaySummary(
@@ -66,14 +65,14 @@ struct TaskManagementFilterRootView: View {
                                 )
                             )
                             .font(.subheadline)
-                            .foregroundStyle(NobleHallTheme.secondaryInk)
+                            .foregroundStyle(AppTheme.secondaryInk)
                             .lineLimit(1)
                         }
                     }
                 }
             }
         }
-        .nobleHallGroupedListStyle()
+        .appGroupedListStyle()
         .toolbar(.hidden, for: .tabBar)
         .navigationTitle("篩選條件")
         .navigationBarTitleDisplayMode(.inline)
@@ -84,7 +83,7 @@ struct TaskManagementFilterRootView: View {
                     groupOptions = []
                     roomOptions = []
                 }
-                .foregroundStyle(NobleHallTheme.secondaryInk)
+                .foregroundStyle(AppTheme.secondaryInk)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("套用") {
@@ -92,7 +91,7 @@ struct TaskManagementFilterRootView: View {
                     dismiss()
                 }
                 .fontWeight(.semibold)
-                .foregroundStyle(NobleHallTheme.brandGold)
+                .foregroundStyle(AppTheme.brandGold)
             }
         }
         .task(id: store.qualityDrawingId) {
@@ -194,19 +193,14 @@ struct TaskManagementFilterRootView: View {
     }
 
     private func loadMeta() async {
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space。"
-            return
-        }
         loadError = nil
         do {
-            async let d = QualityTaskAPI.allQualityDrawings(projectCode: projectCode, spaceId: sid)
-            async let m = QualityTaskAPI.allProjectMembers(projectCode: projectCode, spaceId: sid)
+            async let d = QualityTaskAPI.allQualityDrawings(projectCode: projectCode)
+            async let m = QualityTaskAPI.allProjectMembers(projectCode: projectCode)
             let (drawList, memList) = try await (d, m)
             drawings = drawList
             members = memList
-            if let project = try? await ProjectAPI.projectDetail(projectCode: projectCode, spaceId: sid),
-               let cats = try? await QualityTaskAPI.categoryOptions(projectId: project.id, spaceId: sid) {
+            if let cats = try? await QualityTaskAPI.categoryOptions(projectId: projectCode) {
                 categories = cats.options
             }
             await reloadGroupAndRoomOptions()
@@ -216,7 +210,7 @@ struct TaskManagementFilterRootView: View {
     }
 
     private func reloadGroupAndRoomOptions() async {
-        guard let sid = session.spaceId, let qd = store.qualityDrawingId else {
+        guard let qd = store.qualityDrawingId else {
             groupOptions = []
             roomOptions = []
             return
@@ -224,8 +218,7 @@ struct TaskManagementFilterRootView: View {
         do {
             let points = try await QualityTaskAPI.roomPoints(
                 projectCode: projectCode,
-                qualityDrawingId: qd,
-                spaceId: sid
+                qualityDrawingId: qd
             )
             var groupMap: [String: String] = [:]
             for p in points {
@@ -281,7 +274,7 @@ private struct TaskManagementFilterDrawingPickerView: View {
                 .buttonStyle(.plain)
             }
         }
-        .nobleHallGroupedListStyle()
+        .appGroupedListStyle()
         .navigationTitle("平面圖")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -303,9 +296,9 @@ private struct TaskManagementFilterMultiSelectView: View {
                     systemImage: "line.3.horizontal.decrease.circle",
                     description: Text(emptyHint)
                         .font(.subheadline)
-                        .foregroundStyle(NobleHallTheme.secondaryInk)
+                        .foregroundStyle(AppTheme.secondaryInk)
                 )
-                .nobleHallScreen()
+                .appScreen()
             } else {
                 List {
                     Button {
@@ -326,7 +319,7 @@ private struct TaskManagementFilterMultiSelectView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .nobleHallGroupedListStyle()
+                .appGroupedListStyle()
             }
         }
         .navigationTitle(title)
@@ -353,10 +346,10 @@ private struct TaskManagementFilterTextInputView: View {
             Section {
                 TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(2 ... 4)
-                    .foregroundStyle(NobleHallTheme.ink)
+                    .foregroundStyle(AppTheme.ink)
             }
         }
-        .nobleHallFormStyle()
+        .appFormStyle()
         .dismissKeyboardOnScroll()
         .keyboardDoneToolbar()
         .navigationTitle("描述")
@@ -378,13 +371,13 @@ private struct TaskManagementFilterDateRangeView: View {
                     get: { from != nil },
                     set: { on in from = on ? (from ?? Date()) : nil }
                 ))
-                .tint(NobleHallTheme.brandGold)
+                .tint(AppTheme.brandGold)
                 if from != nil {
                     DatePicker("起日", selection: Binding(
                         get: { from ?? Date() },
                         set: { from = $0 }
                     ), displayedComponents: [.date])
-                    .tint(NobleHallTheme.brandGold)
+                    .tint(AppTheme.brandGold)
                 }
             }
             Section("迄日") {
@@ -392,17 +385,17 @@ private struct TaskManagementFilterDateRangeView: View {
                     get: { to != nil },
                     set: { on in to = on ? (to ?? Date()) : nil }
                 ))
-                .tint(NobleHallTheme.brandGold)
+                .tint(AppTheme.brandGold)
                 if to != nil {
                     DatePicker("迄日", selection: Binding(
                         get: { to ?? Date() },
                         set: { to = $0 }
                     ), displayedComponents: [.date])
-                    .tint(NobleHallTheme.brandGold)
+                    .tint(AppTheme.brandGold)
                 }
             }
         }
-        .nobleHallFormStyle()
+        .appFormStyle()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -443,7 +436,7 @@ private struct TaskManagementFilterMemberSelectView: View {
                 .buttonStyle(.plain)
             }
         }
-        .nobleHallGroupedListStyle()
+        .appGroupedListStyle()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
     }

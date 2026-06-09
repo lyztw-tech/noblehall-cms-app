@@ -75,7 +75,7 @@ enum ExecutionOutbox {
         (try? JSONDecoder().decode([String].self, from: item.photoPathsJSON))?.count ?? 0
     }
 
-    static func flushPending(context: ModelContext, spaceId: String, isOnline: Bool) async {
+    static func flushPending(context: ModelContext, isOnline: Bool) async {
         guard isOnline else { return }
         let fetch = FetchDescriptor<PendingExecutionOutbox>(
             sortBy: [SortDescriptor(\.enqueuedAt, order: .forward)]
@@ -98,8 +98,7 @@ enum ExecutionOutbox {
                     qualityDrawingId: item.qualityDrawingId,
                     taskId: item.qualityTaskId,
                     executionReply: item.executionReply.isEmpty ? nil : item.executionReply,
-                    attachments: attachments,
-                    spaceId: spaceId
+                    attachments: attachments
                 )
                 deletePhotos(for: item)
                 context.delete(item)

@@ -53,10 +53,7 @@ enum TaskManagementStatusFilter: String, CaseIterable, Identifiable, Hashable {
     }
 
     func matches(taskStatus: String?) -> Bool {
-        let normalized = (taskStatus ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
+        let normalized = QualityTaskEditEligibility.normalizedStatus(taskStatus)
         switch self {
         case .pendingAssignment:
             return normalized == "pending_assignment"

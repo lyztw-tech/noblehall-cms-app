@@ -41,7 +41,7 @@ struct TaskManagementRootView: View {
         }
         .navigationTitle("任務管理")
         .navigationBarTitleDisplayMode(.inline)
-        .nobleHallScreen()
+        .appScreen()
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Menu {
@@ -67,7 +67,7 @@ struct TaskManagementRootView: View {
                             .font(.caption2.weight(.semibold))
                     }
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(NobleHallTheme.brandGold)
+                    .foregroundStyle(AppTheme.brandGold)
                 }
             }
         }
@@ -99,7 +99,6 @@ struct TaskManagementAllTasksView: View {
     var filterStore: TaskManagementFilterStore
     @Binding var showFilter: Bool
 
-    @Environment(SessionStore.self) private var session
     @Environment(NetworkPathMonitor.self) private var network
 
     @State private var tasks: [QualityTaskListItemDto] = []
@@ -129,10 +128,10 @@ struct TaskManagementAllTasksView: View {
                         if !network.isConnected {
                             Section {
                                 HStack {
-                                    NobleHallOfflineTag(text: "僅快取")
+                                    AppOfflineTag(text: "僅快取")
                                     Spacer(minLength: 0)
                                 }
-                                .nobleHallOfflineListTagRow()
+                                .appOfflineListTagRow()
                             }
                         }
                         ForEach(grouped, id: \.key) { section in
@@ -151,12 +150,12 @@ struct TaskManagementAllTasksView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
-                    .background(NobleHallTheme.warmBackground)
+                    .background(AppTheme.warmBackground)
                     .dismissKeyboardOnScroll()
                 }
             }
         }
-        .nobleHallScreen()
+        .appScreen()
         .overlay {
             if !isLoading, tasks.isEmpty, loadError == nil {
                 ContentUnavailableView {
@@ -170,7 +169,7 @@ struct TaskManagementAllTasksView: View {
                 }
             }
         }
-        .nobleHallScreen()
+        .appScreen()
         .refreshable { await load() }
         .task { await load() }
         .onChange(of: filterStore.revision) { _, _ in
@@ -201,10 +200,6 @@ struct TaskManagementAllTasksView: View {
     }
 
     private func load() async {
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space，請重新登入。"
-            return
-        }
         guard network.isConnected else {
             loadError = "請連線後載入任務。"
             return
@@ -215,7 +210,6 @@ struct TaskManagementAllTasksView: View {
         do {
             tasks = try await QualityTaskAPI.allProjectTasks(
                 projectCode: projectCode,
-                spaceId: sid,
                 filter: filterStore
             )
         } catch {
@@ -235,7 +229,6 @@ struct TaskManagementFloorPlanListView: View {
     var filterStore: TaskManagementFilterStore
     @Binding var showFilter: Bool
 
-    @Environment(SessionStore.self) private var session
     @Environment(NetworkPathMonitor.self) private var network
 
     @State private var drawings: [QualityDrawingListItemDto] = []
@@ -268,14 +261,14 @@ struct TaskManagementFloorPlanListView: View {
                     }
                     .listStyle(.insetGrouped)
                     .scrollContentBackground(.hidden)
-                    .background(NobleHallTheme.warmBackground)
+                    .background(AppTheme.warmBackground)
                     .dismissKeyboardOnScroll()
                 }
             }
         }
         .refreshable { await load() }
         .task { await load() }
-        .nobleHallScreen()
+        .appScreen()
         .taskManagementSearchFilterToolbar(
             showSearch: $showSearch,
             showFilter: $showFilter,
@@ -315,10 +308,6 @@ struct TaskManagementFloorPlanListView: View {
     }
 
     private func load() async {
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space，請重新登入。"
-            return
-        }
         guard network.isConnected else {
             loadError = "請連線後再使用任務管理。"
             return
@@ -327,7 +316,7 @@ struct TaskManagementFloorPlanListView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            drawings = try await QualityTaskAPI.allQualityDrawings(projectCode: projectCode, spaceId: sid)
+            drawings = try await QualityTaskAPI.allQualityDrawings(projectCode: projectCode)
         } catch {
             loadError = error.userFacingMessage
         }
@@ -349,7 +338,7 @@ struct DrawingSearchView: View {
     }
 
     var body: some View {
-        NobleHallNativeSearchScreen(
+        AppNativeSearchScreen(
             query: $query,
             prompt: "樓層、圖面名稱",
             emptyTitle: "搜尋平面圖",
@@ -368,7 +357,7 @@ struct DrawingSearchView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .background(NobleHallTheme.warmBackground)
+                .background(AppTheme.warmBackground)
                 .dismissKeyboardOnScroll()
             }
         }
@@ -399,16 +388,16 @@ private struct DrawingListRow: View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(NobleHallTheme.brandGold.opacity(0.12))
+                    .fill(AppTheme.brandGold.opacity(0.12))
                 Image(systemName: "doc.richtext.fill")
-                    .foregroundStyle(NobleHallTheme.brandGold)
+                    .foregroundStyle(AppTheme.brandGold)
             }
             .frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.drawing.name)
                     .font(.headline.weight(.semibold))
-                    .foregroundStyle(NobleHallTheme.ink)
-                NobleHallStatusPill(title: "共 \(item.taskCount ?? 0) 項任務", systemImage: "checklist", tint: NobleHallTheme.brandGold)
+                    .foregroundStyle(AppTheme.ink)
+                AppStatusPill(title: "共 \(item.taskCount ?? 0) 項任務", systemImage: "checklist", tint: AppTheme.brandGold)
             }
             Spacer(minLength: 0)
         }
@@ -461,7 +450,7 @@ struct TaskManagementStatusBoardView: View {
                 .padding(.bottom, 16)
             }
         }
-        .background(NobleHallTheme.warmBackground)
+        .background(AppTheme.warmBackground)
         .navigationTitle(route.name)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: TaskManagementStatusRoute.self) { statusRoute in
@@ -494,7 +483,7 @@ private struct TaskManagementStatusCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(NobleHallTheme.cardBackground, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(AppTheme.cardBackground, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(tint.opacity(0.25), lineWidth: 1)
@@ -509,7 +498,6 @@ struct TaskManagementStatusTaskListView: View {
     let route: TaskManagementStatusRoute
     var filterStore: TaskManagementFilterStore
 
-    @Environment(SessionStore.self) private var session
     @Environment(NetworkPathMonitor.self) private var network
 
     @State private var tasks: [QualityTaskListItemDto] = []
@@ -541,11 +529,11 @@ struct TaskManagementStatusTaskListView: View {
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
-                .background(NobleHallTheme.warmBackground)
+                .background(AppTheme.warmBackground)
                 .dismissKeyboardOnScroll()
             }
         }
-        .nobleHallScreen()
+        .appScreen()
         .navigationTitle(route.filter.title)
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
@@ -568,10 +556,6 @@ struct TaskManagementStatusTaskListView: View {
     }
 
     private func load() async {
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space，請重新登入。"
-            return
-        }
         guard network.isConnected else {
             loadError = "請連線後再載入任務。"
             return
@@ -588,7 +572,6 @@ struct TaskManagementStatusTaskListView: View {
             }()
             tasks = try await QualityTaskAPI.allProjectTasks(
                 projectCode: projectCode,
-                spaceId: sid,
                 filter: filterStore,
                 qualityDrawingId: route.drawingId,
                 statuses: mergedStatuses

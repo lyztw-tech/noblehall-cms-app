@@ -2,24 +2,30 @@
 //  AppConfiguration.swift
 //  noblehall-cms-app
 //
-//  與 constructionApp 的 `AppConfiguration` 相同策略：環境變數優先、Debug 本機／區網 http、Release 強制 https。
-//  Noblehall CMS 後端 API root 為 **`/api`**（對齊 Web `VITE_API_BASE_URL` + `/api` 路由）。
+//  環境解析策略：環境變數優先、Debug 本機／區網 http、Release 強制 https。
+//  Construction Dashboard 後端 API root 為 **`/api/v1`**。
 //
 
 import Foundation
 
-/// API root（含路徑 **`/api`**），所有 `APIClient` 請求皆相對於此。
+/// API root（含路徑 **`/api/v1`**），所有 `APIClient` 請求皆相對於此。
 enum AppConfiguration: Sendable {
     /// DEBUG fallback；主要環境請從 Xcode `.xcconfig` 的 `API_BASE_URL` 注入。
-    private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.139:3000/api"
+    private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.71:3003/api/v1"
 
-    /// Release fallback；正式上架前請改為實際正式網址，或使用 Production.xcconfig 注入。
-    private nonisolated static let productionAPIRootURLString = "https://api.example.com/api"
+    /// Release fallback；正式環境與 Production.xcconfig 使用同一個後端。
+    private nonisolated static let productionAPIRootURLString = "https://erp.nexa.lyztw.com/api/v1"
 
     /// 1. Scheme 環境變數 `API_BASE_URL`（方便臨時覆蓋）
     /// 2. Info.plist `API_BASE_URL`（由 `.xcconfig` 注入，正式管理方式）
-    /// 3. 依 Debug／Release fallback
+    /// 3. 依 scheme compilation condition fallback
     nonisolated static var apiRootURL: URL {
+        let resolved = resolveAPIRootURL()
+        assertSafeBackend(resolved)
+        return resolved
+    }
+
+    private nonisolated static func resolveAPIRootURL() -> URL {
         if let raw = ProcessInfo.processInfo.environment["API_BASE_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !raw.isEmpty,
            let url = URL(string: raw)
@@ -31,25 +37,56 @@ enum AppConfiguration: Sendable {
         {
             return url
         }
+        #if NOBLEHALL_ALPHA
+        return URL(string: "https://alpha.erp.nexa.lyztw.com/api/v1")!
+        #elseif NOBLEHALL_PRODUCTION
+        return URL(string: "https://erp.nexa.lyztw.com/api/v1")!
+        #else
         #if DEBUG
         return URL(string: debugDefaultAPIRootURLString)!
         #else
         return URL(string: productionAPIRootURLString)!
+        #endif
+        #endif
+    }
+
+    /// Fail-safe：避免發版組建使用佔位網域或明文 http。
+    private nonisolated static func assertSafeBackend(_ url: URL) {
+        let host = url.host ?? ""
+        let isPlaceholder = host.contains("example.com")
+        let isInsecure = (url.scheme?.lowercased() != "https")
+        #if DEBUG
+        assert(!isPlaceholder, "API_BASE_URL 仍為佔位網域（example.com），發版前請於 xcconfig 設定真實後端 host")
+        #else
+        precondition(
+            !isPlaceholder,
+            "API_BASE_URL 仍為佔位網域（example.com），禁止以此設定發版；請於對應 xcconfig 設定真實後端 host"
+        )
+        precondition(
+            !isInsecure,
+            "Release 類組建的 API_BASE_URL 必須使用 https，目前為：\(url.absoluteString)"
+        )
         #endif
     }
 
     /// 目前 build 環境名稱（由 `.xcconfig` 注入）。
     nonisolated static var environmentName: String {
         bundledString(forInfoKey: "NOBLEHALL_ENVIRONMENT") ?? {
+            #if NOBLEHALL_ALPHA
+            return "Alpha"
+            #elseif NOBLEHALL_PRODUCTION
+            return "Production"
+            #else
             #if DEBUG
             return "Debug"
             #else
             return "Release"
             #endif
+            #endif
         }()
     }
 
-    /// 不含 path 的 origin（例 `http://127.0.0.1:3000`），用於組 `/api/files/...` 等絕對 URL。
+    /// 不含 path 的 origin（例 `http://127.0.0.1:3003`），用於組 `/api/v1/files/...` 等絕對 URL。
     nonisolated static var serverOriginURL: URL {
         apiRootURL.deletingLastPathComponent()
     }
@@ -70,6 +107,19 @@ enum AppConfiguration: Sendable {
         }()
         let path = u.path.isEmpty ? "" : u.path
         return "\(environmentName) · \(u.scheme ?? "?")://\(authority)\(path)"
+    }
+
+    /// 是否顯示「環境與連線資訊」（登入頁等）。Alpha / Production 版一律隱藏，僅 Debug 顯示。
+    nonisolated static var shouldShowDeveloperConnectionInfo: Bool {
+        #if NOBLEHALL_ALPHA || NOBLEHALL_PRODUCTION
+        return false
+        #else
+        #if DEBUG
+        return true
+        #else
+        return false
+        #endif
+        #endif
     }
 
     private nonisolated static func bundledString(forInfoKey key: String) -> String? {

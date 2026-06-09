@@ -28,6 +28,13 @@ struct PickedUploadPhoto: Identifiable, Hashable {
     }
 }
 
+/// 已上傳的既有附件參照；編輯時與新選照片並列在同一個選擇器內顯示。
+struct ExistingAttachmentRef: Identifiable, Hashable {
+    let id: String
+    let thumbnailURL: URL?
+    let fullURL: URL?
+}
+
 enum PhotoUploadProcessing {
     private struct PickedUIImageTransfer: Transferable {
         let uiImage: UIImage
@@ -101,6 +108,10 @@ struct TaskAttachmentPhotoPickerSection: View {
     let filenamePrefix: String
     var isDisabled: Bool = false
     var caption: String?
+    /// 既有（已上傳）附件，與新選照片並列顯示；計入 `maxCount` 總上限。
+    var existingAttachments: [ExistingAttachmentRef] = []
+    /// 提供時既有附件顯示移除鈕；移除後可再加新照片。
+    var onRemoveExisting: ((ExistingAttachmentRef) -> Void)? = nil
     var onError: ((String) -> Void)? = nil
 
     @State private var showSourceDialog = false
@@ -111,7 +122,7 @@ struct TaskAttachmentPhotoPickerSection: View {
     @State private var isLoadingLibrary = false
 
     private var remainingSlots: Int {
-        max(0, maxCount - photos.count)
+        max(0, maxCount - existingAttachments.count - photos.count)
     }
 
     private var canAddMore: Bool {
@@ -136,14 +147,21 @@ struct TaskAttachmentPhotoPickerSection: View {
                     .controlSize(.small)
             }
 
-            if !photos.isEmpty {
+            if !existingAttachments.isEmpty || !photos.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 10) {
+                        ForEach(existingAttachments) { ref in
+                            ExistingAttachmentThumbnail(
+                                ref: ref,
+                                onRemove: (isDisabled || onRemoveExisting == nil) ? nil : { onRemoveExisting?(ref) }
+                            )
+                        }
                         ForEach(photos) { photo in
                             photoThumbnail(photo)
                         }
                     }
-                    .padding(.vertical, 2)
+                    // X 移除鈕往上／往右各凸出 6pt，需留邊距避免被 ScrollView 裁切。
+                    .padding(EdgeInsets(top: 8, leading: 2, bottom: 4, trailing: 8))
                 }
             }
 
@@ -189,10 +207,11 @@ struct TaskAttachmentPhotoPickerSection: View {
     }
 
     private var addButtonTitle: String {
-        if photos.isEmpty {
+        let total = existingAttachments.count + photos.count
+        if total == 0 {
             return "加入照片"
         }
-        return "已選 \(photos.count) 張（最多 \(maxCount) 張）"
+        return "已選 \(total) 張（最多 \(maxCount) 張）"
     }
 
     private func photoThumbnail(_ photo: PickedUploadPhoto) -> some View {
@@ -248,7 +267,7 @@ struct TaskAttachmentPhotoPickerSection: View {
         }
         var next = await MainActor.run { photos }
         for item in items {
-            guard next.count < maxCount else { break }
+            guard existingAttachments.count + next.count < maxCount else { break }
             do {
                 let picked = try await PhotoUploadProcessing.pickedPhoto(from: item, filenamePrefix: filenamePrefix)
                 next.append(picked)
@@ -257,6 +276,73 @@ struct TaskAttachmentPhotoPickerSection: View {
             }
         }
         await MainActor.run { photos = next }
+    }
+}
+
+/// 既有附件縮圖：尺寸／X 鈕／預覽與新選照片一致（編輯時與 `photoThumbnail` 並列）。
+private struct ExistingAttachmentThumbnail: View {
+    let ref: ExistingAttachmentRef
+    var onRemove: (() -> Void)? = nil
+
+    @State private var image: UIImage?
+    @State private var showPreview = false
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let image {
+                    Button {
+                        showPreview = true
+                    } label: {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("預覽照片")
+                } else {
+                    ZStack {
+                        Color(.secondarySystemFill)
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+            }
+            .frame(width: 72, height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color.black.opacity(0.55))
+                        .font(.body)
+                }
+                .offset(x: 6, y: -6)
+                .accessibilityLabel("移除照片")
+            }
+        }
+        .task(id: ref.id) {
+            await loadImage()
+        }
+        .fullScreenCover(isPresented: $showPreview) {
+            if let image {
+                PhotoPreviewScreen(image: image) {
+                    showPreview = false
+                }
+            }
+        }
+    }
+
+    private func loadImage() async {
+        let candidates = [ref.thumbnailURL, ref.fullURL].compactMap { $0 }
+        for u in candidates {
+            if let data = try? await APIClient.shared.fetchBinary(url: u),
+               let img = UIImage(data: data) {
+                await MainActor.run { image = img }
+                return
+            }
+        }
     }
 }
 

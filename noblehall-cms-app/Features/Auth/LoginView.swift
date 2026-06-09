@@ -2,7 +2,7 @@ import SwiftUI
 
 struct LoginView: View {
     @Environment(SessionStore.self) private var session
-    @State private var username = ""
+    @State private var account = ""
     @State private var password = ""
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -17,7 +17,7 @@ struct LoginView: View {
                         .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
                 }
             }
-            .nobleHallScreen()
+            .appScreen()
             .dismissKeyboardOnScroll()
             .toolbar(.hidden, for: .navigationBar)
         }
@@ -32,25 +32,26 @@ struct LoginView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("帳號")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(NobleHallTheme.ink)
-                            TextField("請輸入帳號", text: $username)
+                                .foregroundStyle(AppTheme.ink)
+                            TextField("請輸入帳號", text: $account)
                                 .textContentType(.username)
+                                .keyboardType(.default)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .padding(14)
                                 .background(Color.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(NobleHallTheme.hairline, lineWidth: 1))
+                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(AppTheme.hairline, lineWidth: 1))
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text("密碼")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(NobleHallTheme.ink)
+                                .foregroundStyle(AppTheme.ink)
                             SecureField("請輸入密碼", text: $password)
                                 .textContentType(.password)
                                 .padding(14)
                                 .background(Color.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(NobleHallTheme.hairline, lineWidth: 1))
+                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(AppTheme.hairline, lineWidth: 1))
                         }
 
                         if let errorMessage {
@@ -77,27 +78,29 @@ struct LoginView: View {
                                 }
                             }
                         }
-                        .buttonStyle(NobleHallPrimaryButtonStyle())
-                        .disabled(username.isEmpty || password.isEmpty || isLoading)
-                        .opacity(username.isEmpty || password.isEmpty ? 0.55 : 1)
+                        .buttonStyle(AppPrimaryButtonStyle())
+                        .disabled(account.isEmpty || password.isEmpty || isLoading)
+                        .opacity(account.isEmpty || password.isEmpty ? 0.55 : 1)
                     }
                     .padding(20)
-                    .nobleHallCard()
+                    .appCard()
 
-                    DisclosureGroup {
-                        Text(AppConfiguration.developerFacingAPIStatusLine)
-                            .font(.caption)
-                            .foregroundStyle(NobleHallTheme.secondaryInk)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 8)
-                    } label: {
-                        Label("環境與連線資訊", systemImage: "network")
-                            .font(.footnote.weight(.medium))
-                            .foregroundStyle(NobleHallTheme.secondaryInk)
+                    if AppConfiguration.shouldShowDeveloperConnectionInfo {
+                        DisclosureGroup {
+                            Text(AppConfiguration.developerFacingAPIStatusLine)
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryInk)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 8)
+                        } label: {
+                            Label("環境與連線資訊", systemImage: "network")
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(AppTheme.secondaryInk)
+                        }
+                        .padding(16)
+                        .appCard(cornerRadius: 18)
                     }
-                    .padding(16)
-                    .nobleHallCard(cornerRadius: 18)
         }
     }
 
@@ -116,20 +119,10 @@ struct LoginView: View {
         Task {
             defer { isLoading = false }
             do {
-                let user = try await AuthAPI.login(username: username, password: password)
-                let spaceAfterApply = await MainActor.run { () -> String? in
+                let response = try await AuthAPI.login(account: account, password: password)
+                await MainActor.run {
                     password = ""
-                    session.applyLoginResponse(user)
-                    if session.spaceId == nil, let first = user.spaceIds?.first {
-                        session.setSpaceId(first)
-                    }
-                    return session.spaceId
-                }
-                if let sid = spaceAfterApply {
-                    let full = try await AuthAPI.fetchMe(spaceId: sid)
-                    await MainActor.run {
-                        session.applyLoginResponse(full)
-                    }
+                    session.applyLoginResponse(response)
                 }
             } catch {
                 errorMessage = error.userFacingMessage

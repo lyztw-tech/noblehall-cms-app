@@ -1,7 +1,6 @@
 // Production environment.
-// Replace the host with the real production backend URL before App Store/TestFlight release.
 
-API_BASE_URL = https:/$()/api.example.com/api
+API_BASE_URL = https:/$()/erp.nexa.lyztw.com/api/v1
 APP_DISPLAY_NAME = NobleHall
 APP_BUNDLE_IDENTIFIER = lyztw.noblehall-cms-app
 NOBLEHALL_ENVIRONMENT = Production

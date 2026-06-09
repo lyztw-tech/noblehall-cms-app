@@ -54,6 +54,8 @@ struct TaskDetailView: View {
     @State private var editingLedgerExecution: TaskLedgerEntryDto?
     @State private var executionEditDraftText = ""
     @State private var executionEditPickedPhotos: [PickedUploadPhoto] = []
+    /// 編輯執行紀錄時「要保留的既有附件」；移除後可再上傳新照片。
+    @State private var executionEditKeptAttachments: [ExecutionAttachmentDto] = []
     @State private var executionEditError: String?
     @State private var viewingLedgerEntry: TaskLedgerEntryDto?
     @State private var isSavingExecutionEdit = false
@@ -66,6 +68,7 @@ struct TaskDetailView: View {
     @State private var isSubmittingReview = false
     @State private var showCompleteSubmitConfirm = false
     @State private var isSubmittingExecution = false
+    @State private var projectCanAssignQualityTasks = false
 
     enum BottomTab: String, CaseIterable, Identifiable {
         case task = "任務資料"
@@ -157,7 +160,7 @@ struct TaskDetailView: View {
                         }
                     }
                 }
-                .nobleHallFormStyle()
+                .appFormStyle()
                 .navigationTitle(draft.title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -184,7 +187,6 @@ struct TaskDetailView: View {
 
     private struct LedgerEntryDetailSheet: View {
         let entry: TaskLedgerEntryDto
-        let spaceId: String?
         let onClose: () -> Void
 
         var body: some View {
@@ -215,7 +217,7 @@ struct TaskDetailView: View {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 10) {
                                     ForEach(attachments) { attachment in
-                                        ExecutionAttachmentThumbnail(attachment: attachment, spaceId: spaceId)
+                                        ExecutionAttachmentThumbnail(attachment: attachment)
                                     }
                                 }
                                 .padding(.vertical, 4)
@@ -224,7 +226,7 @@ struct TaskDetailView: View {
                         }
                     }
                 }
-                .nobleHallGroupedListStyle()
+                .appGroupedListStyle()
                 .navigationTitle("查看紀錄")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -257,7 +259,6 @@ struct TaskDetailView: View {
                     fallbackImageURL: floorImageFallbackURL,
                     offlineImage: offlineFloorImage,
                     offlineMarkerReferenceSize: offlineMarkerReferenceSize,
-                    spaceId: session.spaceId,
                     marker: spaceMarker,
                     loadError: $floorPlanError
                 )
@@ -280,6 +281,13 @@ struct TaskDetailView: View {
                             .accessibilityLabel("平面圖 \(planTitle)")
                     }
                     HStack(alignment: .top, spacing: 8) {
+                        Button(action: onClose) {
+                            Image(systemName: "chevron.left")
+                                .font(.headline.weight(.semibold))
+                                .padding(9)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                        .accessibilityLabel("返回")
                         Group {
                             if (floorPlanError?.isEmpty == false) || (loadError?.isEmpty == false) {
                                 VStack(alignment: .leading, spacing: 6) {
@@ -316,13 +324,6 @@ struct TaskDetailView: View {
                             .accessibilityLabel("任務資料")
                             .accessibilityHint("開啟任務資料與執行紀錄")
                         }
-                        Button(action: onClose) {
-                            Image(systemName: "xmark.circle.fill")
-                                .symbolRenderingMode(.hierarchical)
-                                .font(.title2)
-                                .padding(4)
-                        }
-                        .accessibilityLabel("關閉")
                     }
                     .padding(.horizontal, 10)
                     .padding(.top, 6)
@@ -333,8 +334,13 @@ struct TaskDetailView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showMainSheet) {
                 mainBottomSheet
-                    .presentationDetents([.medium, .large])
+                    // 收合 / 中段 / 展開三段；最小段只露出標題列，等同貼底資訊卡。
+                    .presentationDetents([.height(116), .medium, .large])
                     .presentationDragIndicator(.visible)
+                    // 卡片收合或中段時，背後平面圖仍可縮放／平移（觸控不被 sheet 攔截）。
+                    .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                    // 資訊卡常駐：避免下滑整個關掉，改以拖到最小段收合、左上返回鍵離開頁面。
+                    .interactiveDismissDisabled()
             }
             .overlay {
                 if isLoading, detail == nil { ProgressView("載入中…").padding().background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12)) }
@@ -350,9 +356,9 @@ struct TaskDetailView: View {
                 refreshPendingExecutions()
             }
             .onChange(of: network.isConnected) { _, online in
-                guard online, let sid = session.spaceId else { return }
+                guard online else { return }
                 Task {
-                    await OutboxSync.flushPending(modelContext: modelContext, spaceId: sid, isOnline: true)
+                    await OutboxSync.flushPending(modelContext: modelContext, isOnline: true)
                     refreshPendingExecutions()
                     await loadAll()
                 }
@@ -410,15 +416,18 @@ struct TaskDetailView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .nobleHallScreen()
+            .appScreen()
             .navigationTitle("任務")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("編輯") {
-                        showTaskEditSheet = true
+                    // 編輯只針對「任務資料」；切到「執行紀錄」分頁時隱藏。
+                    if bottomTab == .task {
+                        Button("編輯") {
+                            showTaskEditSheet = true
+                        }
+                        .disabled(detail?.task == nil || taskEditBlockedReason != nil)
                     }
-                    .disabled(detail?.task == nil || taskEditBlockedReason != nil)
                 }
             }
         }
@@ -438,25 +447,20 @@ struct TaskDetailView: View {
         }
         .sheet(isPresented: $showTaskEditSheet) {
             Group {
-                if let t = detail?.task, let sid = session.spaceId,
+                if let t = detail?.task,
                    let qdid = resolvedQualityDrawingId(for: t), !qdid.isEmpty
                 {
                     TaskDetailTaskEditSheet(
                         projectCode: projectCode,
                         qualityDrawingId: qdid,
                         taskId: taskId,
-                        spaceId: sid,
                         initialTask: t,
-                        assignmentFieldsOnly: QualityTaskEditEligibility.assignmentFieldsOnly(
-                            task: t,
-                            userId: session.currentUser?.id,
-                            hasAssignPermission: canAssignQualityTask
-                        ),
+                        assignmentFieldsOnly: taskEditLimitedToAssignmentFields,
+                        executorOnly: taskEditLimitedToExecutorOnly,
                         onCancel: { showTaskEditSheet = false },
                         onSaved: {
                             showTaskEditSheet = false
                             await loadAll()
-                            await notifyTaskChanged()
                         }
                     )
                 } else {
@@ -589,40 +593,35 @@ struct TaskDetailView: View {
             userId: session.currentUser?.id,
             isOnline: network.isConnected,
             hasQualityDrawing: hasQualityDrawingForEdit,
-            hasAssignPermission: canAssignQualityTask,
-            hasUpdatePermission: canUpdateQualityTask
+            canAssignQualityTasks: projectCanAssignQualityTasks
         )
     }
 
-    /// 可編輯但僅限審查人時的補充說明。
+    private var isCurrentUserTaskCreator: Bool {
+        guard let t = detail?.task else { return false }
+        return QualityTaskEditEligibility.isCurrentUserCreator(task: t, userId: session.currentUser?.id)
+    }
+
+    private var taskEditLimitedToExecutorOnly: Bool {
+        guard let t = detail?.task else { return false }
+        guard taskEditBlockedReason == nil else { return false }
+        return !QualityTaskEditEligibility.isCurrentUserCreator(task: t, userId: session.currentUser?.id)
+            && projectCanAssignQualityTasks
+    }
+
+    private var taskEditLimitedToAssignmentFields: Bool {
+        guard let t = detail?.task else { return false }
+        return taskEditLimitedToExecutorOnly || QualityTaskEditEligibility.nonAssignmentFieldsLocked(task: t)
+    }
+
+    /// 可編輯但僅限指派欄位時的補充說明。
     private var taskEditLimitedToAssignmentHint: String? {
-        guard let t = detail?.task else { return nil }
         guard taskEditBlockedReason == nil else { return nil }
-        let assignmentOnly = QualityTaskEditEligibility.assignmentFieldsOnly(
-            task: t,
-            userId: session.currentUser?.id,
-            hasAssignPermission: canAssignQualityTask
-        )
-        guard assignmentOnly else { return nil }
-        return "此任務目前僅能修改審查人與執行對象。"
-    }
-
-    private var canAssignQualityTask: Bool {
-        detail?.viewer?.canAssignQualityTask ?? hasQualityTaskManagementPermission("assign")
-    }
-
-    private var canUpdateQualityTask: Bool {
-        detail?.viewer?.canUpdateQualityTask ?? hasQualityTaskManagementPermission("update")
-    }
-
-    private func hasQualityTaskManagementPermission(_ action: String) -> Bool {
-        guard let permissions = session.currentUser?.permissions else { return false }
-        return permissions.contains { raw in
-            let parts = raw.lowercased().split(separator: ":").map(String.init)
-            guard parts.count >= 2 else { return false }
-            return (parts[0] == "quality_task_management" || parts[0] == "quality_task")
-                && parts[1] == action
+        if taskEditLimitedToExecutorOnly {
+            return "您目前僅可調整執行人，其餘欄位已鎖定。"
         }
+        guard taskEditLimitedToAssignmentFields else { return nil }
+        return "任務建立已超過三天，僅能修改審查人與執行人。"
     }
 
     private static func executorLabel(for task: QualityTaskDto) -> String {
@@ -681,34 +680,27 @@ struct TaskDetailView: View {
                             .lineLimit(4 ... 14)
                     }
                     Section {
-                        if let list = entry.attachments, !list.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(list) { att in
-                                        ExecutionAttachmentThumbnail(attachment: att, spaceId: session.spaceId)
-                                    }
-                                }
-                            }
-                            .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                        }
-                        if network.isConnected, maxAdditionalExecutionPhotos(for: entry) > 0 {
-                            TaskAttachmentPhotoPickerSection(
-                                photos: $executionEditPickedPhotos,
-                                maxCount: maxAdditionalExecutionPhotos(for: entry),
-                                filenamePrefix: "execution",
-                                isDisabled: isSavingExecutionEdit,
-                                caption: "與新增紀錄相同：含既有附件每筆最多 \(maxExecutionAttachmentsPerEntry) 個。",
-                                onError: { executionEditError = $0 }
-                            )
-                        } else if !network.isConnected {
-                            Text("連線後才能上傳附件。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if maxAdditionalExecutionPhotos(for: entry) == 0 {
-                            Text("已達每筆 \(maxExecutionAttachmentsPerEntry) 個附件上限。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        // 與「新增紀錄」相同的照片選擇器：既有附件與新選照片並列在同一排。
+                        TaskAttachmentPhotoPickerSection(
+                            photos: $executionEditPickedPhotos,
+                            maxCount: maxExecutionAttachmentsPerEntry,
+                            filenamePrefix: "execution",
+                            isDisabled: isSavingExecutionEdit || !network.isConnected,
+                            caption: network.isConnected
+                                ? "與新增紀錄相同：每筆執行紀錄最多 \(maxExecutionAttachmentsPerEntry) 個附件。"
+                                : "連線後才能編輯附件。",
+                            existingAttachments: executionEditKeptAttachments.map {
+                                ExistingAttachmentRef(
+                                    id: $0.id,
+                                    thumbnailURL: URLResolver.absoluteAssetURL($0.thumbnailUrl),
+                                    fullURL: URLResolver.absoluteAssetURL($0.url)
+                                )
+                            },
+                            onRemoveExisting: { ref in
+                                executionEditKeptAttachments.removeAll { $0.id == ref.id }
+                            },
+                            onError: { executionEditError = $0 }
+                        )
                     } header: {
                         Text("附件")
                     }
@@ -720,13 +712,14 @@ struct TaskDetailView: View {
                         }
                     }
                 }
-                .nobleHallFormStyle()
+                .appFormStyle()
                 .navigationTitle("編輯執行紀錄")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("取消") {
                             executionEditPickedPhotos = []
+                            executionEditKeptAttachments = []
                             editingLedgerExecution = nil
                         }
                     }
@@ -740,6 +733,7 @@ struct TaskDetailView: View {
                 .onAppear {
                     executionEditDraftText = entry.body ?? ""
                     executionEditPickedPhotos = []
+                    executionEditKeptAttachments = entry.attachments ?? []
                     executionEditError = nil
                 }
             }
@@ -748,7 +742,6 @@ struct TaskDetailView: View {
         .fullScreenCover(item: $viewingLedgerEntry) { entry in
             LedgerEntryDetailSheet(
                 entry: entry,
-                spaceId: session.spaceId,
                 onClose: { viewingLedgerEntry = nil }
             )
         }
@@ -851,17 +844,12 @@ struct TaskDetailView: View {
 
     private var reviewStageReadOnlyMessage: String {
         guard network.isConnected else { return "離線時無法審核；此階段也不能新增執行紀錄。" }
-        guard detail?.latestSubmission?.id?.isEmpty == false else {
-            return "尚未取得提交資料，無法審核；此階段也不能新增執行紀錄。"
-        }
         return "此階段不能新增執行紀錄。若您是審核人或專案負責人，請確認帳號權限後操作。"
     }
 
     private var availableReviewKind: ReviewKind? {
         guard network.isConnected,
               let task = detail?.task,
-              let submissionId = detail?.latestSubmission?.id,
-              !submissionId.isEmpty,
               let qdid = resolvedQualityDrawingId(for: task),
               !qdid.isEmpty
         else {
@@ -870,7 +858,7 @@ struct TaskDetailView: View {
 
         let status = QualityTaskEditEligibility.normalizedStatus(task.status)
         let currentUserId = session.currentUser?.id
-        if status == "director_check", detail?.viewer?.isProjectOwner == true {
+        if status == "director_check" {
             return .director
         }
         if status == "in_review",
@@ -890,33 +878,29 @@ struct TaskDetailView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 10) {
-                Spacer()
-
+            HStack(spacing: 12) {
                 Button {
                     openReviewDraft(kind: kind, result: .rejected)
                 } label: {
                     Label("退回", systemImage: "arrow.uturn.backward.circle.fill")
+                        .frame(maxWidth: .infinity)
                         .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .controlSize(.small)
                 .tint(.red)
 
                 Button {
                     openReviewDraft(kind: kind, result: .approved)
                 } label: {
                     Label("通過", systemImage: "checkmark.circle.fill")
+                        .frame(maxWidth: .infinity)
                         .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 10)
                         .padding(.vertical, 4)
                 }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-
-                Spacer()
+                .controlSize(.small)
             }
         }
         .padding(14)
@@ -940,12 +924,12 @@ struct TaskDetailView: View {
                 } else {
                     Image(systemName: "paperplane.circle.fill")
                         .font(.title2)
-                        .foregroundStyle(NobleHallTheme.brandGold)
+                        .foregroundStyle(AppTheme.brandGold)
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text("完成提交")
                         .font(.headline)
-                        .foregroundStyle(NobleHallTheme.ink)
+                        .foregroundStyle(AppTheme.ink)
                     Text("送出 \(currentRoundExecutionCount) 筆執行紀錄進入審核")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -956,11 +940,11 @@ struct TaskDetailView: View {
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(NobleHallTheme.brandGold.opacity(0.12))
+                    .fill(AppTheme.brandGold.opacity(0.12))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(NobleHallTheme.brandGold.opacity(0.30), lineWidth: 1)
+                    .strokeBorder(AppTheme.brandGold.opacity(0.30), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -976,10 +960,10 @@ struct TaskDetailView: View {
             HStack(spacing: 10) {
                 Image(systemName: "plus.circle.fill")
                     .font(.title2)
-                    .foregroundStyle(NobleHallTheme.brandGold)
+                    .foregroundStyle(AppTheme.brandGold)
                 Text("新增執行紀錄")
                     .font(.headline)
-                    .foregroundStyle(NobleHallTheme.ink)
+                    .foregroundStyle(AppTheme.ink)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
@@ -989,11 +973,11 @@ struct TaskDetailView: View {
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(NobleHallTheme.brandGold.opacity(0.12))
+                    .fill(AppTheme.brandGold.opacity(0.12))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(NobleHallTheme.brandGold.opacity(0.30), lineWidth: 1)
+                    .strokeBorder(AppTheme.brandGold.opacity(0.30), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -1291,21 +1275,19 @@ struct TaskDetailView: View {
         )
     }
 
-    private func maxAdditionalExecutionPhotos(for entry: TaskLedgerEntryDto) -> Int {
-        max(0, maxExecutionAttachmentsPerEntry - (entry.attachments?.count ?? 0))
+    private func maxAdditionalExecutionPhotos(for _: TaskLedgerEntryDto) -> Int {
+        max(0, maxExecutionAttachmentsPerEntry - executionEditKeptAttachments.count)
     }
 
     private func ledgerExecutionEditHasChanges(entry: TaskLedgerEntryDto) -> Bool {
         let original = (entry.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmed = executionEditDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed != original || !executionEditPickedPhotos.isEmpty
+        let originalIds = (entry.attachments ?? []).map(\.id)
+        let keptIds = executionEditKeptAttachments.map(\.id)
+        return trimmed != original || !executionEditPickedPhotos.isEmpty || keptIds != originalIds
     }
 
     private func saveLedgerExecutionEdit(entry: TaskLedgerEntryDto) async {
-        guard let sid = session.spaceId else {
-            executionEditError = "缺少 Space。"
-            return
-        }
         guard let qdid = resolvedQualityDrawingId(for: detail?.task), !qdid.isEmpty else {
             executionEditError = "缺少平面圖資訊。"
             return
@@ -1316,43 +1298,38 @@ struct TaskDetailView: View {
         let trimmed = executionEditDraftText.trimmingCharacters(in: .whitespacesAndNewlines)
         let original = (entry.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let textChanged = trimmed != original
+        let originalIds = (entry.attachments ?? []).map(\.id)
+        let keptIds = executionEditKeptAttachments.map(\.id)
         let maxNew = maxAdditionalExecutionPhotos(for: entry)
         do {
-            if textChanged {
+            // 先上傳新照片取得 id，與保留的既有附件併成最終 attachmentIds（後端以此完整集合取代）。
+            var finalIds = keptIds
+            let newFiles: [(data: Data, filename: String, mimeType: String)] = executionEditPickedPhotos
+                .prefix(maxNew)
+                .map { ($0.data, $0.filename, $0.mimeType) }
+            if !newFiles.isEmpty {
+                let newIds = try await QualityTaskAPI.uploadExecutionAttachmentIds(
+                    projectCode: projectCode,
+                    attachments: newFiles
+                )
+                finalIds.append(contentsOf: newIds)
+            }
+            let attachmentsChanged = finalIds != originalIds
+            if textChanged || attachmentsChanged {
                 try await QualityTaskAPI.updateExecution(
                     projectCode: projectCode,
                     qualityDrawingId: qdid,
                     taskId: taskId,
                     executionId: entry.id,
-                    body: UpdateExecutionBody(executionReply: trimmed.isEmpty ? nil : trimmed),
-                    spaceId: sid
-                )
-            }
-            if !executionEditPickedPhotos.isEmpty {
-                let newFiles: [(data: Data, filename: String, mimeType: String)] = executionEditPickedPhotos
-                    .prefix(maxNew)
-                    .map { ($0.data, $0.filename, $0.mimeType) }
-                if !newFiles.isEmpty {
-                    let uploadResp = try await QualityTaskAPI.uploadExecutionAttachments(
-                        projectCode: projectCode,
-                        qualityDrawingId: qdid,
-                        taskId: taskId,
-                        executionId: entry.id,
-                        attachments: newFiles,
-                        spaceId: sid
+                    body: UpdateExecutionBody(
+                        executionReply: textChanged ? (trimmed.isEmpty ? nil : trimmed) : nil,
+                        attachmentIds: attachmentsChanged ? finalIds : nil
                     )
-                    if uploadResp.success == false {
-                        showExecutionSaveNotice(uploadResp.message ?? "部分檔案上傳失敗")
-                        editingLedgerExecution = nil
-                        executionEditPickedPhotos = []
-                        await loadAll()
-                        refreshPendingExecutions()
-                        return
-                    }
-                }
+                )
             }
             editingLedgerExecution = nil
             executionEditPickedPhotos = []
+            executionEditKeptAttachments = []
             await loadAll()
             refreshPendingExecutions()
         } catch {
@@ -1361,10 +1338,6 @@ struct TaskDetailView: View {
     }
 
     private func deleteLedgerExecution(entry: TaskLedgerEntryDto) async {
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space。"
-            return
-        }
         guard let qdid = resolvedQualityDrawingId(for: detail?.task), !qdid.isEmpty else {
             loadError = "缺少平面圖資訊。"
             return
@@ -1374,8 +1347,7 @@ struct TaskDetailView: View {
                 projectCode: projectCode,
                 qualityDrawingId: qdid,
                 taskId: taskId,
-                executionId: entry.id,
-                spaceId: sid
+                executionId: entry.id
             )
             await loadAll()
             refreshPendingExecutions()
@@ -1391,21 +1363,17 @@ struct TaskDetailView: View {
         offlineFloorImage = nil
         offlineMarkerReferenceSize = .zero
         defer { isLoading = false }
-        guard let sid = session.spaceId else {
-            let msg = "尚未選擇 Space，無法載入任務。"
-            loadError = msg
-            return
-        }
         do {
             if network.isConnected {
-                let d = try await QualityTaskAPI.taskDetail(projectCode: projectCode, taskId: taskId, spaceId: sid)
+                await refreshQualityTaskAssignPermission()
+                let d = try await QualityTaskAPI.taskDetail(projectCode: projectCode, taskId: taskId)
                 detail = d
                 try LocalTaskCache.saveDetail(d, projectCode: projectCode, taskId: taskId, context: modelContext)
                 try modelContext.save()
-                await loadPlanForTask(task: d.task, spaceId: sid, preferNetwork: true)
+                await loadPlanForTask(task: d.task, preferNetwork: true)
             } else {
                 detail = try LocalTaskCache.loadDetail(projectCode: projectCode, taskId: taskId, context: modelContext)
-                await loadPlanForTask(task: detail?.task, spaceId: sid, preferNetwork: false)
+                await loadPlanForTask(task: detail?.task, preferNetwork: false)
                 if detail == nil {
                     loadError = "離線暫存中無此任務詳情，請先連線開啟一次任務。"
                 }
@@ -1413,7 +1381,16 @@ struct TaskDetailView: View {
         } catch {
             loadError = error.userFacingMessage
             detail = try? LocalTaskCache.loadDetail(projectCode: projectCode, taskId: taskId, context: modelContext)
-            await loadPlanForTask(task: detail?.task, spaceId: sid, preferNetwork: false)
+            await loadPlanForTask(task: detail?.task, preferNetwork: false)
+        }
+    }
+
+    private func refreshQualityTaskAssignPermission() async {
+        do {
+            let permissions = try await ProjectAPI.myPermissions(projectCode: projectCode)
+            projectCanAssignQualityTasks = permissions.modules["construction.quality"]?.canAssign == true
+        } catch {
+            projectCanAssignQualityTasks = false
         }
     }
 
@@ -1423,7 +1400,7 @@ struct TaskDetailView: View {
         return cachedListRow?.drawingId
     }
 
-    private func loadPlanForTask(task: QualityTaskDto?, spaceId: String, preferNetwork: Bool) async {
+    private func loadPlanForTask(task: QualityTaskDto?, preferNetwork: Bool) async {
         guard let qdid = resolvedQualityDrawingId(for: task) else {
             resolvedDrawingId = nil
             floorImageURL = nil
@@ -1441,13 +1418,11 @@ struct TaskDetailView: View {
         do {
             async let drawingTask = QualityTaskAPI.drawingDetail(
                 projectCode: projectCode,
-                qualityDrawingId: qdid,
-                spaceId: spaceId
+                qualityDrawingId: qdid
             )
             async let pointsTask = QualityTaskAPI.roomPoints(
                 projectCode: projectCode,
-                qualityDrawingId: qdid,
-                spaceId: spaceId
+                qualityDrawingId: qdid
             )
             let (drawing, pts) = try await (drawingTask, pointsTask)
             roomPoints = pts
@@ -1465,7 +1440,7 @@ struct TaskDetailView: View {
             if let task {
                 spaceMarker = resolveTaskSpaceMarker(task: task, points: pts)
             }
-            if let data = await PlanAssetCache.downloadImageData(file: drawing.drawing.file, spaceId: spaceId) {
+            if let data = await PlanAssetCache.downloadImageData(file: drawing.drawing.file) {
                 try? await PlanAssetCache.persistImageData(
                     projectCode: projectCode,
                     qualityDrawingId: qdid,
@@ -1547,10 +1522,6 @@ struct TaskDetailView: View {
     }
 
     private func saveNewExecution(reply: String, attachments: [(data: Data, filename: String, mimeType: String)]) async -> Bool {
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space，無法儲存執行紀錄。"
-            return false
-        }
         guard let qdid = detail?.task.qualityDrawing?.id ?? resolvedDrawingId ?? qualityDrawingIdHint else {
             loadError = "無法儲存：此任務缺少平面圖資訊。"
             return false
@@ -1563,8 +1534,7 @@ struct TaskDetailView: View {
                     qualityDrawingId: qdid,
                     taskId: taskId,
                     executionReply: trimmed.isEmpty ? nil : trimmed,
-                    attachments: attachments,
-                    spaceId: sid
+                    attachments: attachments
                 )
                 if let w = res.uploadWarnings, !w.isEmpty {
                     loadError = w.map { "\($0.filename)：\($0.error)" }.joined(separator: "；")
@@ -1608,10 +1578,6 @@ struct TaskDetailView: View {
             loadError = "僅任務執行人可完成提交，且任務需為進行中並已有一筆以上執行紀錄。"
             return
         }
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space，無法送出執行紀錄。"
-            return
-        }
         guard let task = detail?.task,
               let qdid = resolvedQualityDrawingId(for: task),
               !qdid.isEmpty
@@ -1628,8 +1594,7 @@ struct TaskDetailView: View {
             _ = try await QualityTaskAPI.submitExecution(
                 projectCode: projectCode,
                 qualityDrawingId: qdid,
-                taskId: taskId,
-                spaceId: sid
+                taskId: taskId
             )
             showExecutionSaveNotice("執行紀錄已送出，等待審核。")
             await loadAll()
@@ -1655,20 +1620,12 @@ struct TaskDetailView: View {
     }
 
     private func submitReviewAction(draft: ReviewActionDraft) async {
-        guard let sid = session.spaceId else {
-            reviewSubmitError = "缺少 Space，無法送出審核。"
-            return
-        }
         guard let task = detail?.task else {
             reviewSubmitError = "尚未載入任務資料。"
             return
         }
         guard let qdid = resolvedQualityDrawingId(for: task), !qdid.isEmpty else {
             reviewSubmitError = "缺少平面圖資訊，無法送出審核。"
-            return
-        }
-        guard let submissionId = detail?.latestSubmission?.id, !submissionId.isEmpty else {
-            reviewSubmitError = "缺少提交資料，無法送出審核。"
             return
         }
         guard reviewCommentText.count <= 2000 else {
@@ -1684,6 +1641,7 @@ struct TaskDetailView: View {
         let files = reviewPickedPhotos.map { ($0.data, $0.filename, $0.mimeType) }
 
         do {
+            let submissionId = detail?.latestSubmission?.id ?? taskId
             if !files.isEmpty {
                 let uploadResp: UploadReviewAttachmentsResponseDto
                 switch draft.kind {
@@ -1693,8 +1651,7 @@ struct TaskDetailView: View {
                         qualityDrawingId: qdid,
                         taskId: taskId,
                         submissionId: submissionId,
-                        attachments: files,
-                        spaceId: sid
+                        attachments: files
                     )
                 case .reviewer:
                     uploadResp = try await QualityTaskAPI.uploadReviewAttachments(
@@ -1702,8 +1659,7 @@ struct TaskDetailView: View {
                         qualityDrawingId: qdid,
                         taskId: taskId,
                         submissionId: submissionId,
-                        attachments: files,
-                        spaceId: sid
+                        attachments: files
                     )
                 }
                 if uploadResp.success == false {
@@ -1723,8 +1679,7 @@ struct TaskDetailView: View {
                     qualityDrawingId: qdid,
                     taskId: taskId,
                     submissionId: submissionId,
-                    body: body,
-                    spaceId: sid
+                    body: body
                 )
             case .reviewer:
                 _ = try await QualityTaskAPI.reviewSubmission(
@@ -1732,8 +1687,7 @@ struct TaskDetailView: View {
                     qualityDrawingId: qdid,
                     taskId: taskId,
                     submissionId: submissionId,
-                    body: body,
-                    spaceId: sid
+                    body: body
                 )
             }
 
@@ -1754,7 +1708,7 @@ struct TaskDetailView: View {
     }
 }
 
-// MARK: - 平面圖縮放／平移（對齊 constructionApp `SiteRecordPlanZoomPanView`）
+// MARK: - 平面圖縮放／平移
 
 /// 將圖片置於 bounds 內 **aspectFit**（與網頁版、現場 App 平面圖邏輯一致）。
 private func qualityTaskAspectFitImageRect(imageSize: CGSize, in bounds: CGSize) -> CGRect {
@@ -1863,6 +1817,12 @@ private struct QualityTaskFloorPlanZoomPanView: View {
 
     /// 將後端／Web 畫布座標換算為在 `fitted` 內的 0…1 比例（相對於顯示用 `image.size`）。
     private func markerNormalizedFractions(marker: TaskSpaceMarker) -> (CGFloat, CGFloat) {
+        // Construction Dashboard stores floor-plan positions as normalized 0...1 ratios.
+        if (0 ... 1).contains(marker.x), (0 ... 1).contains(marker.y) {
+            return (CGFloat(marker.x), CGFloat(marker.y))
+        }
+
+        // Older tasks used pixel coordinates relative to the source plan image.
         let rw = markerReferenceSize.width
         let rh = markerReferenceSize.height
         guard rw > 0, rh > 0 else { return (0, 0) }
@@ -1874,7 +1834,7 @@ private struct QualityTaskFloorPlanZoomPanView: View {
 
 /// 繞 `bounds` 中心縮放並帶 `offset` 時，求螢幕點 `focal` 下對應的「內容座標」（與 `planLayer` 區域對齊之座標系）。
 private enum QualityTaskPlanZoomMath {
-    static let minScale: CGFloat = 0.2
+    static let minScale: CGFloat = 0.5
     static let maxScale: CGFloat = 6
 
     static func clampScale(_ s: CGFloat) -> CGFloat {
@@ -2039,7 +1999,7 @@ private struct QualityTaskPlanInteractionOverlay: UIViewRepresentable {
     }
 }
 
-/// 後端 `GET /files/...` 在 `requireSpaceMember` 之下，**必須**帶 `x-space-id`；`AsyncImage` 不會帶自訂 header，載入必定失敗。
+/// 後端 `GET /files/...` 需要 Authorization header；`AsyncImage` 不會帶自訂 header，載入必定失敗。
 /// 主 URL 若 404 或解碼失敗（例如縮圖尚未產生），會依序改試 `fallbackURL`。
 private struct SpaceAuthenticatedImageView: View {
     let projectCode: String
@@ -2048,7 +2008,6 @@ private struct SpaceAuthenticatedImageView: View {
     let fallbackURL: URL?
     let offlineImage: UIImage?
     let offlineMarkerReferenceSize: CGSize
-    let spaceId: String?
     let marker: TaskSpaceMarker?
     @Binding var loadError: String?
 
@@ -2057,10 +2016,10 @@ private struct SpaceAuthenticatedImageView: View {
     @State private var markerReferenceSize: CGSize = .zero
     @State private var didFail = false
 
-    /// 僅依 URL／Space 觸發下載，勿併入 `markerReferenceSize`（載入完成後會變動而導致重複請求）。
+    /// 僅依 URL 觸發下載，勿併入 `markerReferenceSize`（載入完成後會變動而導致重複請求）。
     private var loadURLIdentity: String {
         let offlineKey = offlineImage != nil ? "1" : "0"
-        return "\(url?.absoluteString ?? "")|\(fallbackURL?.absoluteString ?? "")|\(spaceId ?? "")|\(offlineKey)|\(qualityDrawingId ?? "")"
+        return "\(url?.absoluteString ?? "")|\(fallbackURL?.absoluteString ?? "")|\(offlineKey)|\(qualityDrawingId ?? "")"
     }
 
     /// 標記或參考尺寸變更時重置縮放視圖狀態（不重新下載二進位）。
@@ -2111,16 +2070,6 @@ private struct SpaceAuthenticatedImageView: View {
             return
         }
 
-        guard let sid = spaceId, !sid.isEmpty else {
-            await MainActor.run {
-                image = nil
-                markerReferenceSize = .zero
-                didFail = false
-                loadError = "無法下載平面圖：尚未取得 Space（請確認已登入並選擇 Space）。"
-            }
-            return
-        }
-
         var candidates: [URL] = []
         if let u = url { candidates.append(u) }
         if let f = fallbackURL,
@@ -2150,7 +2099,7 @@ private struct SpaceAuthenticatedImageView: View {
         var lastError: String?
         for candidate in candidates {
             do {
-                let data = try await APIClient.shared.fetchBinary(url: candidate, spaceId: sid)
+                let data = try await APIClient.shared.fetchBinary(url: candidate)
                 let decoded = await MainActor.run(body: { FloorPlanRasterDecoder.decode(from: data) })
                 if let decoded {
                     await MainActor.run {
@@ -2215,7 +2164,6 @@ private struct FloorPlanCanvasView: View {
     let fallbackImageURL: URL?
     let offlineImage: UIImage?
     let offlineMarkerReferenceSize: CGSize
-    let spaceId: String?
     let marker: TaskSpaceMarker?
     @Binding var loadError: String?
 
@@ -2235,7 +2183,6 @@ private struct FloorPlanCanvasView: View {
                         fallbackURL: fallbackImageURL,
                         offlineImage: offlineImage,
                         offlineMarkerReferenceSize: offlineMarkerReferenceSize,
-                        spaceId: spaceId,
                         marker: marker,
                         loadError: $loadError
                     )
@@ -2256,33 +2203,47 @@ private struct FloorPlanCanvasView: View {
 
 private struct ExecutionAttachmentThumbnail: View {
     let attachment: ExecutionAttachmentDto
-    let spaceId: String?
+    /// 提供時於右上角顯示移除鈕（編輯狀態用）。
+    var onRemove: (() -> Void)? = nil
 
     @State private var image: UIImage?
     @State private var showPreview = false
 
     var body: some View {
-        Group {
-            if let image {
-                Button {
-                    showPreview = true
-                } label: {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("預覽附件")
-            } else {
-                ZStack {
-                    Color(.systemGray5)
-                    ProgressView()
-                        .scaleEffect(0.75)
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let image {
+                    Button {
+                        showPreview = true
+                    } label: {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("預覽附件")
+                } else {
+                    ZStack {
+                        Color(.systemGray5)
+                        ProgressView()
+                            .scaleEffect(0.75)
+                    }
                 }
             }
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color.black.opacity(0.55))
+                        .font(.body)
+                }
+                .offset(x: 6, y: -6)
+                .accessibilityLabel("移除附件")
+            }
         }
-        .frame(width: 56, height: 56)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .task(id: attachment.id) {
             await loadImage()
         }
@@ -2296,10 +2257,9 @@ private struct ExecutionAttachmentThumbnail: View {
     }
 
     private func loadImage() async {
-        guard let sid = spaceId, !sid.isEmpty else { return }
         let candidates = [attachment.thumbnailUrl, attachment.url].compactMap { URLResolver.absoluteAssetURL($0) }
         for u in candidates {
-            if let data = try? await APIClient.shared.fetchBinary(url: u, spaceId: sid),
+            if let data = try? await APIClient.shared.fetchBinary(url: u),
                let img = UIImage(data: data) {
                 await MainActor.run { image = img }
                 return
@@ -2356,7 +2316,7 @@ private struct AddExecutionSheet: View {
             }
             .dismissKeyboardOnScroll()
             .keyboardDoneToolbar()
-            .nobleHallFormStyle()
+            .appFormStyle()
             .navigationTitle("新增紀錄")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

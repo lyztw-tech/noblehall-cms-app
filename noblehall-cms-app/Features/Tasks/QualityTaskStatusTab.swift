@@ -10,11 +10,7 @@ enum QualityTaskStatusTab: String, CaseIterable, Identifiable, Hashable {
     var id: String { rawValue }
 
     func matches(status: String?) -> Bool {
-        let normalized = (status ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-            .replacingOccurrences(of: " ", with: "_")
+        let normalized = QualityTaskEditEligibility.normalizedStatus(status)
         switch self {
         case .pendingAssignment:
             return normalized == "pending_assignment" || normalized == "待指派"

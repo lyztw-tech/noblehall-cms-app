@@ -85,7 +85,7 @@ enum TaskCreateOutbox {
         try context.save()
     }
 
-    static func flushPending(context: ModelContext, spaceId: String, isOnline: Bool) async {
+    static func flushPending(context: ModelContext, isOnline: Bool) async {
         guard isOnline else { return }
         let fetch = FetchDescriptor<PendingTaskCreateOutbox>(
             sortBy: [SortDescriptor(\.enqueuedAt, order: .forward)]
@@ -112,8 +112,7 @@ enum TaskCreateOutbox {
                 created = try await QualityTaskAPI.createTask(
                     projectCode: projectCode,
                     qualityDrawingId: qualityDrawingId,
-                    body: body,
-                    spaceId: spaceId
+                    body: body
                 )
             } catch {
                 return
@@ -141,8 +140,7 @@ enum TaskCreateOutbox {
                             projectCode: projectCode,
                             qualityDrawingId: qualityDrawingId,
                             taskId: created.id,
-                            attachments: attachments,
-                            spaceId: spaceId
+                            attachments: attachments
                         )
                     } catch {
                         // 任務已建立；附件失敗不重送建立任務。

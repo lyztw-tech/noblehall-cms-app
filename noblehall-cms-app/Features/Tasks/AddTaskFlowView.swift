@@ -65,7 +65,7 @@ struct QualityDrawingPickerSheet: View {
             }
             .navigationTitle("選擇平面圖")
             .navigationBarTitleDisplayMode(.inline)
-            .nobleHallGroupedListStyle()
+            .appGroupedListStyle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消", action: onCancel)
@@ -87,10 +87,6 @@ struct QualityDrawingPickerSheet: View {
     }
 
     private func load() async {
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space。"
-            return
-        }
         isLoading = true
         loadError = nil
         defer { isLoading = false }
@@ -98,7 +94,7 @@ struct QualityDrawingPickerSheet: View {
         if network.isConnected {
             usingOfflineCache = false
             do {
-                let res = try await QualityTaskAPI.listQualityDrawings(projectCode: projectCode, spaceId: sid)
+                let res = try await QualityTaskAPI.listQualityDrawings(projectCode: projectCode)
                 drawings = res.data
             } catch {
                 loadError = error.userFacingMessage
@@ -131,16 +127,23 @@ struct AddTaskPlanScreen: View {
     @State private var floorImageFallbackURL: URL?
     @State private var offlineFloorImage: UIImage?
     @State private var roomPoints: [QualityTaskRoomPointDto] = []
+    @State private var projectGroups: [ProjectGroupDto] = []
     @State private var markerReferenceSize: CGSize = .zero
     @State private var floorPlanError: String?
     @State private var loadError: String?
     @State private var isLoading = true
     @State private var selectedPoint: QualityTaskRoomPointDto?
 
+    private var groupNamesById: [String: String] {
+        projectGroups.reduce(into: [:]) { result, group in
+            result[group.id] = group.name
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
-                NobleHallTheme.warmBackground.ignoresSafeArea()
+                AppTheme.warmBackground.ignoresSafeArea()
                 if isLoading {
                     ProgressView("載入平面圖…")
                 } else if let loadError {
@@ -157,9 +160,9 @@ struct AddTaskPlanScreen: View {
                         fallbackImageURL: floorImageFallbackURL,
                         offlineImage: offlineFloorImage,
                         isOfflineMode: !network.isConnected,
-                        spaceId: session.spaceId,
                         markerReferenceSize: markerReferenceSize,
                         points: roomPoints,
+                        groupNamesById: groupNamesById,
                         selectedPointId: selectedPoint?.id,
                         loadError: $floorPlanError,
                         onPointSelected: { point in
@@ -208,6 +211,7 @@ struct AddTaskPlanScreen: View {
                     qualityDrawingId: drawing.id,
                     drawingName: drawing.drawing.name,
                     point: point,
+                    groupNamesById: groupNamesById,
                     onCancel: { selectedPoint = nil },
                     onCreated: {
                         selectedPoint = nil
@@ -220,15 +224,10 @@ struct AddTaskPlanScreen: View {
             }
             .task { await loadPlan() }
         }
-        .nobleHallScreen()
+        .appScreen()
     }
 
     private func loadPlan() async {
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space。"
-            isLoading = false
-            return
-        }
         isLoading = true
         loadError = nil
         floorPlanError = nil
@@ -245,6 +244,7 @@ struct AddTaskPlanScreen: View {
                 return
             }
             roomPoints = bundle.points
+            projectGroups = (try? AddTaskFormCache.load(projectCode: projectCode, context: modelContext))?.groups ?? []
             markerReferenceSize = bundle.markerReferenceSize
             floorImageURL = nil
             floorImageFallbackURL = nil
@@ -262,16 +262,15 @@ struct AddTaskPlanScreen: View {
         do {
             async let drawingTask = QualityTaskAPI.drawingDetail(
                 projectCode: projectCode,
-                qualityDrawingId: drawing.id,
-                spaceId: sid
+                qualityDrawingId: drawing.id
             )
             async let pointsTask = QualityTaskAPI.roomPoints(
                 projectCode: projectCode,
-                qualityDrawingId: drawing.id,
-                spaceId: sid
+                qualityDrawingId: drawing.id
             )
             let (detail, pts) = try await (drawingTask, pointsTask)
             roomPoints = pts
+            projectGroups = await loadProjectGroups()
             offlineFloorImage = nil
             let (primary, fallback) = Self.floorURLs(for: detail.drawing.file)
             floorImageURL = primary
@@ -280,7 +279,7 @@ struct AddTaskPlanScreen: View {
                 floorPlanError = "此圖面尚未上傳檔案。"
             }
             Task {
-                if let data = await PlanAssetCache.downloadImageData(file: detail.drawing.file, spaceId: sid) {
+                if let data = await PlanAssetCache.downloadImageData(file: detail.drawing.file) {
                     try? await PlanAssetCache.persistImageData(
                         projectCode: projectCode,
                         qualityDrawingId: drawing.id,
@@ -291,6 +290,14 @@ struct AddTaskPlanScreen: View {
             }
         } catch {
             loadError = error.userFacingMessage
+        }
+    }
+
+    private func loadProjectGroups() async -> [ProjectGroupDto] {
+        do {
+            return try await QualityTaskAPI.drawingGroups(projectCode: projectCode, qualityDrawingId: drawing.id)
+        } catch {
+            return []
         }
     }
 
@@ -316,6 +323,7 @@ private struct CreateTaskFormSheet: View {
     let qualityDrawingId: String
     let drawingName: String
     let point: QualityTaskRoomPointDto
+    let groupNamesById: [String: String]
     let onCancel: () -> Void
     let onCreated: () -> Void
 
@@ -327,9 +335,7 @@ private struct CreateTaskFormSheet: View {
     @State private var description = ""
     @State private var priority = "medium"
     @State private var reviewerId = ""
-    @State private var executorKind: ExecutorKind = .none
     @State private var executorUserId = ""
-    @State private var executorGroupId = ""
     @State private var categoryId = ""
     @State private var dueDate = Date()
     @State private var includeDueDate = false
@@ -347,13 +353,6 @@ private struct CreateTaskFormSheet: View {
     @State private var isLoadingMeta = true
     @State private var isSubmitting = false
 
-    private enum ExecutorKind: String, CaseIterable, Identifiable {
-        case none = "不指定"
-        case user = "個人"
-        case group = "群組"
-        var id: String { rawValue }
-    }
-
     private var isHouseholdPoint: Bool {
         point.id.hasPrefix(addTaskHouseholdPointIdPrefix)
     }
@@ -369,21 +368,30 @@ private struct CreateTaskFormSheet: View {
         return point.groupId
     }
 
-    private var groupDisplayName: String {
-        guard let gid = resolvedGroupId else { return "—" }
-        return groups.first { $0.id == gid }?.name ?? point.name
+    private var groupDisplayName: String? {
+        guard let gid = resolvedGroupId, !gid.isEmpty else { return nil }
+        if let groupName = groups.first(where: { $0.id == gid })?.name, !groupName.isEmpty {
+            return groupName
+        }
+        if let groupName = groupNamesById[gid]?.trimmingCharacters(in: .whitespacesAndNewlines), !groupName.isEmpty {
+            return groupName
+        }
+        return isLoadingMeta ? "載入中…" : nil
+    }
+
+    private var roomDisplayName: String? {
+        guard !isHouseholdPoint else { return nil }
+        let roomName = point.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return roomName.isEmpty ? nil : roomName
     }
 
     private var siteStaffMembers: [ProjectMemberDto] {
-        members.filter { $0.memberCategory == "site" }
+        let siteMembers = members.filter { $0.memberCategory == "site" }
+        return siteMembers.isEmpty ? members : siteMembers
     }
 
     private var reviewerOptions: [ProjectMemberDto] {
         members
-    }
-
-    private var groupsWithOwner: [ProjectGroupDto] {
-        groups.filter { $0.ownerId != nil }
     }
 
     var body: some View {
@@ -395,9 +403,11 @@ private struct CreateTaskFormSheet: View {
                     }
                 }
                 Section("空間") {
-                    LabeledContent("空間", value: isHouseholdPoint ? "（戶別／群組點）" : point.name)
-                    if resolvedGroupId != nil {
+                    if let groupDisplayName {
                         LabeledContent("群組", value: groupDisplayName)
+                    }
+                    if let roomDisplayName {
+                        LabeledContent("空間", value: roomDisplayName)
                     }
                 }
                 Section("任務內容") {
@@ -425,24 +435,10 @@ private struct CreateTaskFormSheet: View {
                             Text(m.user.displayName ?? m.user.username ?? m.user.id).tag(m.user.id)
                         }
                     }
-                    Picker("執行對象", selection: $executorKind) {
-                        ForEach(ExecutorKind.allCases) { k in
-                            Text(k.rawValue).tag(k)
-                        }
-                    }
-                    if executorKind == .user {
-                        Picker("執行人（工地人員）", selection: $executorUserId) {
-                            Text("請選擇").tag("")
-                            ForEach(siteStaffMembers, id: \.user.id) { m in
-                                Text(m.user.displayName ?? m.user.username ?? m.user.id).tag(m.user.id)
-                            }
-                        }
-                    } else if executorKind == .group {
-                        Picker("執行群組", selection: $executorGroupId) {
-                            Text("請選擇").tag("")
-                            ForEach(groupsWithOwner) { g in
-                                Text(g.name).tag(g.id)
-                            }
+                    Picker("執行人", selection: $executorUserId) {
+                        Text("請選擇").tag("")
+                        ForEach(siteStaffMembers, id: \.user.id) { m in
+                            Text(m.user.displayName ?? m.user.username ?? m.user.id).tag(m.user.id)
                         }
                     }
                 }
@@ -473,7 +469,7 @@ private struct CreateTaskFormSheet: View {
             }
             .dismissKeyboardOnScroll()
             .keyboardDoneToolbar()
-            .nobleHallFormStyle()
+            .appFormStyle()
             .navigationTitle("新增任務")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -496,11 +492,6 @@ private struct CreateTaskFormSheet: View {
     }
 
     private func loadMeta() async {
-        guard let sid = session.spaceId else {
-            loadError = "缺少 Space。"
-            isLoadingMeta = false
-            return
-        }
         isLoadingMeta = true
         loadError = nil
         defer { isLoadingMeta = false }
@@ -515,19 +506,18 @@ private struct CreateTaskFormSheet: View {
         }
 
         do {
-            async let proj = ProjectAPI.projectDetail(projectCode: projectCode, spaceId: sid)
-            async let mem = QualityTaskAPI.allProjectMembers(projectCode: projectCode, spaceId: sid)
-            async let grp = QualityTaskAPI.listProjectGroups(projectCode: projectCode, spaceId: sid)
-            let (project, memList, grpRes) = try await (proj, mem, grp)
-            projectId = project.id
+            async let mem = QualityTaskAPI.allProjectMembers(projectCode: projectCode)
+            async let grp = QualityTaskAPI.listProjectGroups(projectCode: projectCode)
+            let (memList, grpRes) = try await (mem, grp)
+            projectId = projectCode
             members = memList
             groups = grpRes.data
-            if let cats = try? await QualityTaskAPI.categoryOptions(projectId: project.id, spaceId: sid) {
+            if let cats = try? await QualityTaskAPI.categoryOptions(projectId: projectCode) {
                 categories = cats.options
             }
             try? AddTaskFormCache.save(
                 projectCode: projectCode,
-                projectUUID: project.id,
+                projectUUID: projectCode,
                 members: memList,
                 groups: grpRes.data,
                 categories: categories,
@@ -564,31 +554,6 @@ private struct CreateTaskFormSheet: View {
             submitError = "請選擇審核人員。"
             return
         }
-        guard let sid = session.spaceId else {
-            submitError = "缺少 Space。"
-            return
-        }
-
-        var execId: String?
-        var execType: String?
-        switch executorKind {
-        case .none:
-            break
-        case .user:
-            guard !executorUserId.isEmpty else {
-                submitError = "請選擇執行人。"
-                return
-            }
-            execId = executorUserId
-            execType = "user"
-        case .group:
-            guard !executorGroupId.isEmpty else {
-                submitError = "請選擇執行群組。"
-                return
-            }
-            execId = executorGroupId
-            execType = "group"
-        }
 
         var dueISO: String?
         if includeDueDate {
@@ -603,8 +568,8 @@ private struct CreateTaskFormSheet: View {
             categoryId: categoryId.isEmpty ? nil : categoryId,
             groupId: resolvedGroupId,
             roomId: resolvedRoomId,
-            executorId: execId,
-            executorType: execType,
+            executorId: executorUserId.isEmpty ? nil : executorUserId,
+            executorType: executorUserId.isEmpty ? nil : "user",
             reviewerId: reviewerId,
             priority: priority,
             dueDate: dueISO
@@ -638,8 +603,7 @@ private struct CreateTaskFormSheet: View {
             let created = try await QualityTaskAPI.createTask(
                 projectCode: projectCode,
                 qualityDrawingId: qualityDrawingId,
-                body: body,
-                spaceId: sid
+                body: body
             )
             if !pickedPhotos.isEmpty {
                 let attachments = pickedPhotos.map { ($0.data, $0.filename, "image/jpeg") }
@@ -647,8 +611,7 @@ private struct CreateTaskFormSheet: View {
                     projectCode: projectCode,
                     qualityDrawingId: qualityDrawingId,
                     taskId: created.id,
-                    attachments: attachments,
-                    spaceId: sid
+                    attachments: attachments
                 )
             }
             onCreated()
@@ -667,9 +630,9 @@ private struct AddTaskFloorPlanCanvas: View {
     let fallbackImageURL: URL?
     let offlineImage: UIImage?
     let isOfflineMode: Bool
-    let spaceId: String?
     let markerReferenceSize: CGSize
     let points: [QualityTaskRoomPointDto]
+    let groupNamesById: [String: String]
     let selectedPointId: String?
     @Binding var loadError: String?
     let onPointSelected: (QualityTaskRoomPointDto) -> Void
@@ -684,9 +647,9 @@ private struct AddTaskFloorPlanCanvas: View {
                 offlineImage: offlineImage,
                 isOfflineMode: isOfflineMode,
                 offlineRefSize: markerReferenceSize,
-                spaceId: spaceId,
                 markerReferenceSize: markerReferenceSize,
                 points: points,
+                groupNamesById: groupNamesById,
                 selectedPointId: selectedPointId,
                 loadError: $loadError,
                 onPointSelected: onPointSelected
@@ -704,9 +667,9 @@ private struct AddTaskAuthenticatedPlanView: View {
     let offlineImage: UIImage?
     let isOfflineMode: Bool
     let offlineRefSize: CGSize
-    let spaceId: String?
     let markerReferenceSize: CGSize
     let points: [QualityTaskRoomPointDto]
+    let groupNamesById: [String: String]
     let selectedPointId: String?
     @Binding var loadError: String?
     let onPointSelected: (QualityTaskRoomPointDto) -> Void
@@ -717,7 +680,7 @@ private struct AddTaskAuthenticatedPlanView: View {
     @State private var didFail = false
 
     private var identity: String {
-        "\(url?.absoluteString ?? "")|\(offlineImage != nil)|\(points.count)|\(selectedPointId ?? "")"
+        "\(url?.absoluteString ?? "")|\(offlineImage != nil)|\(points.count)|\(groupNamesById.count)|\(selectedPointId ?? "")"
     }
 
     var body: some View {
@@ -727,6 +690,7 @@ private struct AddTaskAuthenticatedPlanView: View {
                     image: image,
                     markerReferenceSize: refSize.width > 0 ? refSize : image.size,
                     points: points,
+                    groupNamesById: groupNamesById,
                     selectedPointId: selectedPointId,
                     onPointSelected: onPointSelected
                 )
@@ -770,10 +734,6 @@ private struct AddTaskAuthenticatedPlanView: View {
             }
             return
         }
-        guard let sid = spaceId, !sid.isEmpty else {
-            await MainActor.run { loadError = "缺少 Space。" }
-            return
-        }
         var candidates: [URL] = []
         if let u = url { candidates.append(u) }
         if let f = fallbackURL, !candidates.contains(where: { $0.absoluteString == f.absoluteString }) {
@@ -786,7 +746,7 @@ private struct AddTaskAuthenticatedPlanView: View {
         await MainActor.run { image = nil; didFail = false; loadError = nil }
         for candidate in candidates {
             do {
-                let data = try await APIClient.shared.fetchBinary(url: candidate, spaceId: sid)
+                let data = try await APIClient.shared.fetchBinary(url: candidate)
                 if let decoded = await MainActor.run(body: { FloorPlanRasterDecoder.decode(from: data) }) {
                     await MainActor.run {
                         image = decoded.image
@@ -823,10 +783,42 @@ private func addTaskPlanScreenPoint(
     )
 }
 
+private let addTaskClusterScaleThreshold: CGFloat = 1.55
+
+private struct AddTaskProjectedPlanPoint: Identifiable {
+    let point: QualityTaskRoomPointDto
+    let screen: CGPoint
+
+    var id: String { point.id }
+}
+
+private struct AddTaskPlanPointCluster: Identifiable {
+    let id: String
+    let screen: CGPoint
+    let points: [AddTaskProjectedPlanPoint]
+    let representative: QualityTaskRoomPointDto
+    let label: String
+
+    var spaceCount: Int {
+        let spaces = points.filter { !addTaskIsGroupPoint($0.point) }
+        return spaces.isEmpty ? points.count : spaces.count
+    }
+
+    var hasIncompleteTask: Bool {
+        points.contains { ($0.point.incompleteTaskCount ?? 0) > 0 }
+    }
+
+    func contains(pointId: String?) -> Bool {
+        guard let pointId else { return false }
+        return points.contains { $0.point.id == pointId }
+    }
+}
+
 private struct AddTaskZoomablePlanView: View {
     let image: UIImage
     let markerReferenceSize: CGSize
     let points: [QualityTaskRoomPointDto]
+    let groupNamesById: [String: String]
     let selectedPointId: String?
     let onPointSelected: (QualityTaskRoomPointDto) -> Void
 
@@ -837,6 +829,16 @@ private struct AddTaskZoomablePlanView: View {
         GeometryReader { geo in
             let bounds = geo.size
             let fitted = addTaskAspectFitRect(imageSize: image.size, in: bounds)
+            let projectedPoints = addTaskProjectedPlanPoints(
+                points: points,
+                fitted: fitted,
+                bounds: bounds,
+                scale: scale,
+                offset: offset,
+                markerReferenceSize: markerReferenceSize
+            )
+            let shouldCluster = scale < addTaskClusterScaleThreshold
+            let detailedPoints = addTaskDetailedPlanPoints(from: projectedPoints)
             ZStack {
                 Image(uiImage: image)
                     .resizable()
@@ -848,26 +850,38 @@ private struct AddTaskZoomablePlanView: View {
                     .offset(offset)
                     .allowsHitTesting(false)
 
-                ForEach(points) { p in
-                    let frac = addTaskPointFraction(x: p.x, y: p.y, ref: markerReferenceSize)
-                    let local = CGPoint(
-                        x: fitted.minX + frac.x * fitted.width,
-                        y: fitted.minY + frac.y * fitted.height
-                    )
-                    let screen = addTaskPlanScreenPoint(
-                        local: local,
-                        bounds: bounds,
-                        scale: scale,
-                        offset: offset
-                    )
-                    let incomplete = (p.incompleteTaskCount ?? 0) > 0
-                    let selected = p.id == selectedPointId
-                    QualityPlanPointMarker.badge(
-                        count: p.taskCount ?? 0,
-                        incomplete: incomplete,
-                        selected: selected
-                    )
-                    .position(x: screen.x, y: screen.y)
+                Group {
+                    if shouldCluster {
+                        ForEach(addTaskPlanPointClusters(from: projectedPoints, groupNamesById: groupNamesById)) { cluster in
+                            if cluster.spaceCount <= 1,
+                               let single = addTaskDetailedPlanPoints(from: cluster.points).first {
+                                let p = single.point
+                                QualityPlanPointMarker.badge(
+                                    count: p.taskCount ?? 0,
+                                    incomplete: (p.incompleteTaskCount ?? 0) > 0,
+                                    selected: p.id == selectedPointId
+                                )
+                                .position(x: single.screen.x, y: single.screen.y)
+                            } else {
+                                QualityPlanPointMarker.clusterBadge(
+                                    label: cluster.label,
+                                    incomplete: cluster.hasIncompleteTask,
+                                    selected: cluster.contains(pointId: selectedPointId)
+                                )
+                                .position(x: cluster.screen.x, y: cluster.screen.y)
+                            }
+                        }
+                    } else {
+                        ForEach(detailedPoints) { projected in
+                            let p = projected.point
+                            QualityPlanPointMarker.badge(
+                                count: p.taskCount ?? 0,
+                                incomplete: (p.incompleteTaskCount ?? 0) > 0,
+                                selected: p.id == selectedPointId
+                            )
+                            .position(x: projected.screen.x, y: projected.screen.y)
+                        }
+                    }
                 }
                 .allowsHitTesting(false)
 
@@ -887,6 +901,117 @@ private struct AddTaskZoomablePlanView: View {
 }
 
 // MARK: - 手勢 / 座標 / 解碼
+
+private func addTaskIsGroupPoint(_ point: QualityTaskRoomPointDto) -> Bool {
+    point.id.hasPrefix(addTaskHouseholdPointIdPrefix)
+}
+
+private func addTaskDetailedPlanPoints(from points: [AddTaskProjectedPlanPoint]) -> [AddTaskProjectedPlanPoint] {
+    let spacePoints = points.filter { !addTaskIsGroupPoint($0.point) }
+    return spacePoints.isEmpty ? points : spacePoints
+}
+
+private func addTaskProjectedPlanPoints(
+    points: [QualityTaskRoomPointDto],
+    fitted: CGRect,
+    bounds: CGSize,
+    scale: CGFloat,
+    offset: CGSize,
+    markerReferenceSize: CGSize
+) -> [AddTaskProjectedPlanPoint] {
+    points.map { point in
+        let frac = addTaskPointFraction(x: point.x, y: point.y, ref: markerReferenceSize)
+        let local = CGPoint(
+            x: fitted.minX + frac.x * fitted.width,
+            y: fitted.minY + frac.y * fitted.height
+        )
+        let screen = addTaskPlanScreenPoint(
+            local: local,
+            bounds: bounds,
+            scale: scale,
+            offset: offset
+        )
+        return AddTaskProjectedPlanPoint(point: point, screen: screen)
+    }
+}
+
+private func addTaskPlanPointClusters(
+    from points: [AddTaskProjectedPlanPoint],
+    groupNamesById: [String: String]
+) -> [AddTaskPlanPointCluster] {
+    let grouped = Dictionary(grouping: points) { projected in
+        if let groupId = projected.point.groupId, !groupId.isEmpty {
+            return "group:\(groupId)"
+        }
+        return "space:\(projected.point.id)"
+    }
+
+    return grouped.compactMap { key, values in
+        guard let representative = addTaskClusterRepresentative(from: values) else { return nil }
+        let anchor = values.first(where: { addTaskIsGroupPoint($0.point) })?.screen
+            ?? addTaskAverageScreenPoint(values.map(\.screen))
+        let label = addTaskClusterLabel(
+            key: key,
+            values: values,
+            groupNamesById: groupNamesById
+        )
+        return AddTaskPlanPointCluster(
+            id: key,
+            screen: anchor,
+            points: values,
+            representative: representative.point,
+            label: label
+        )
+    }
+    .sorted { lhs, rhs in
+        if lhs.screen.y == rhs.screen.y {
+            return lhs.screen.x < rhs.screen.x
+        }
+        return lhs.screen.y < rhs.screen.y
+    }
+}
+
+private func addTaskClusterLabel(
+    key: String,
+    values: [AddTaskProjectedPlanPoint],
+    groupNamesById: [String: String]
+) -> String {
+    if key.hasPrefix("group:"),
+       let groupId = values.compactMap({ $0.point.groupId }).first(where: { !$0.isEmpty }),
+       let name = groupNamesById[groupId]?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !name.isEmpty {
+        return name
+    }
+
+    if let groupPointName = values
+        .first(where: { addTaskIsGroupPoint($0.point) })?
+        .point
+        .name
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+        !groupPointName.isEmpty {
+        return groupPointName
+    }
+
+    return "群組"
+}
+
+private func addTaskClusterRepresentative(from points: [AddTaskProjectedPlanPoint]) -> AddTaskProjectedPlanPoint? {
+    if let groupPoint = points.first(where: { addTaskIsGroupPoint($0.point) }) {
+        return groupPoint
+    }
+    let anchor = addTaskAverageScreenPoint(points.map(\.screen))
+    return points.min { lhs, rhs in
+        hypot(lhs.screen.x - anchor.x, lhs.screen.y - anchor.y) < hypot(rhs.screen.x - anchor.x, rhs.screen.y - anchor.y)
+    }
+}
+
+private func addTaskAverageScreenPoint(_ points: [CGPoint]) -> CGPoint {
+    guard !points.isEmpty else { return .zero }
+    let sum = points.reduce(CGPoint.zero) { partial, point in
+        CGPoint(x: partial.x + point.x, y: partial.y + point.y)
+    }
+    return CGPoint(x: sum.x / CGFloat(points.count), y: sum.y / CGFloat(points.count))
+}
 
 private func addTaskAspectFitRect(imageSize: CGSize, in bounds: CGSize) -> CGRect {
     guard imageSize.width > 0, imageSize.height > 0, bounds.width > 0, bounds.height > 0 else { return .zero }
@@ -947,7 +1072,13 @@ private struct AddTaskPlanGestureOverlay: UIViewRepresentable {
         pan.delegate = context.coordinator
         v.addGestureRecognizer(pan)
 
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        v.addGestureRecognizer(doubleTap)
+
         tap.require(toFail: pan)
+        tap.require(toFail: doubleTap)
+        pan.require(toFail: doubleTap)
         return v
     }
 
@@ -982,7 +1113,8 @@ private struct AddTaskPlanGestureOverlay: UIViewRepresentable {
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
         ) -> Bool {
-            gestureRecognizer is UIPinchGestureRecognizer || otherGestureRecognizer is UIPinchGestureRecognizer
+            // 縮放與平移互斥：避免雙指縮放時同時觸發平移造成畫面抖動。
+            false
         }
 
         @objc func handleTap(_ g: UITapGestureRecognizer) {
@@ -994,26 +1126,53 @@ private struct AddTaskPlanGestureOverlay: UIViewRepresentable {
 
         private func nearestPoint(to tap: CGPoint) -> QualityTaskRoomPointDto? {
             guard fitted.width > 0, fitted.height > 0, !points.isEmpty else { return nil }
+            let projected = addTaskProjectedPlanPoints(
+                points: points,
+                fitted: fitted,
+                bounds: boundsSize,
+                scale: scale,
+                offset: offset,
+                markerReferenceSize: markerReferenceSize
+            )
+            if scale < addTaskClusterScaleThreshold {
+                return nearestVisibleSpacePointAtClusterScale(to: tap, projected: projected)
+            }
+
+            let candidates = addTaskDetailedPlanPoints(from: projected)
             var best: QualityTaskRoomPointDto?
             var bestDist: CGFloat = .greatestFiniteMagnitude
             let hitRadius: CGFloat = 44
 
-            for p in points {
-                let frac = addTaskPointFractionCGFloat(x: p.x, y: p.y, ref: markerReferenceSize)
-                let local = CGPoint(x: fitted.minX + frac.x * fitted.width, y: fitted.minY + frac.y * fitted.height)
-                let screen = addTaskPlanScreenPoint(
-                    local: local,
-                    bounds: boundsSize,
-                    scale: scale,
-                    offset: offset
-                )
-                let d = hypot(tap.x - screen.x, tap.y - screen.y)
+            for candidate in candidates {
+                let d = hypot(tap.x - candidate.screen.x, tap.y - candidate.screen.y)
                 if d < bestDist {
                     bestDist = d
-                    best = p
+                    best = candidate.point
                 }
             }
             return bestDist <= hitRadius ? best : nil
+        }
+
+        private func nearestVisibleSpacePointAtClusterScale(
+            to tap: CGPoint,
+            projected: [AddTaskProjectedPlanPoint]
+        ) -> QualityTaskRoomPointDto? {
+            var best: AddTaskProjectedPlanPoint?
+            var bestDist: CGFloat = .greatestFiniteMagnitude
+            let hitRadius: CGFloat = 44
+
+            for cluster in addTaskPlanPointClusters(from: projected, groupNamesById: [:]) {
+                guard cluster.spaceCount <= 1,
+                      let visiblePoint = addTaskDetailedPlanPoints(from: cluster.points).first else {
+                    continue
+                }
+                let d = hypot(tap.x - visiblePoint.screen.x, tap.y - visiblePoint.screen.y)
+                if d < bestDist {
+                    bestDist = d
+                    best = visiblePoint
+                }
+            }
+            return bestDist <= hitRadius ? best?.point : nil
         }
 
         @objc func pinch(_ g: UIPinchGestureRecognizer) {
@@ -1026,7 +1185,7 @@ private struct AddTaskPlanGestureOverlay: UIViewRepresentable {
                 let f0 = g.location(in: view)
                 anchorContent = addTaskContentPoint(bounds: b, focal: f0, scale: baseScale, offset: baseOffset)
             case .changed:
-                let s1 = min(max(baseScale * g.scale, 0.2), 6)
+                let s1 = min(max(baseScale * g.scale, 0.5), 6)
                 let f = g.location(in: view)
                 offset = addTaskOffsetKeeping(bounds: b, content: anchorContent, focal: f, newScale: s1)
                 scale = s1
@@ -1044,6 +1203,15 @@ private struct AddTaskPlanGestureOverlay: UIViewRepresentable {
                 offset = CGSize(width: panStart.width + t.x, height: panStart.height + t.y)
             case .ended: panStart = offset
             default: break
+            }
+        }
+
+        @objc func handleDoubleTap(_: UITapGestureRecognizer) {
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    self.scale = 1
+                    self.offset = .zero
+                }
             }
         }
     }

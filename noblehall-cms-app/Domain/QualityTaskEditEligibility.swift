@@ -6,10 +6,18 @@ enum QualityTaskEditEligibility {
     static let basicInfoFullEditWindowDays = 3
 
     static func normalizedStatus(_ raw: String?) -> String {
-        (raw ?? "")
+        let normalized = (raw ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             .replacingOccurrences(of: "-", with: "_")
+        switch normalized {
+        case "unassigned": return "pending_assignment"
+        case "pending_owner_confirmation": return "director_check"
+        case "pending_review": return "in_review"
+        case "returned": return "rejected"
+        case "completed": return "approved"
+        default: return normalized
+        }
     }
 
     /// 與 Web 任務管理詳情 `allowWorkbenchBasicInfoEdit`：進入審核／負責人確認／已完成後不可再編輯基本資料。
@@ -32,8 +40,8 @@ enum QualityTaskEditEligibility {
 
     /// 與 Web `basicInfoNonAssignmentFieldsLocked`：建立逾 N 日後，非指派欄位鎖定（仍允許開啟編輯改審查人等）。
     static func nonAssignmentFieldsLocked(task: QualityTaskDto) -> Bool {
-        guard allowsBasicInfoEdit(task: task) else { return false }
-        return !isCreatedWithinLastCalendarDays(task.createdAt, days: basicInfoFullEditWindowDays)
+        !allowsBasicInfoEdit(task: task)
+            || !isCreatedWithinLastCalendarDays(task.createdAt, days: basicInfoFullEditWindowDays)
     }
 
     static func isCurrentUserCreator(task: QualityTaskDto, userId: String?) -> Bool {
@@ -48,30 +56,13 @@ enum QualityTaskEditEligibility {
         userId: String?,
         isOnline: Bool,
         hasQualityDrawing: Bool,
-        hasAssignPermission: Bool,
-        hasUpdatePermission: Bool
+        canAssignQualityTasks: Bool
     ) -> String? {
         if !isOnline { return "離線時無法編輯任務。" }
         if !hasQualityDrawing { return "缺少品質圖面資訊，無法更新任務。" }
-        if !allowsBasicInfoEdit(task: task) {
-            return "任務已進入審核、負責人確認或已完成，無法編輯基本資料。"
+        if !isCurrentUserCreator(task: task, userId: userId), !canAssignQualityTasks {
+            return "僅限建立任務的人員可編輯。"
         }
-        if isCurrentUserCreator(task: task, userId: userId) {
-            return hasUpdatePermission ? nil : "沒有修改品質任務的權限。"
-        }
-        if task.reviewer?.id == userId, hasUpdatePermission { return nil }
-        if hasAssignPermission { return nil }
-        return "僅限建立者、審查人員或具指派權限的人員可編輯。"
-    }
-
-    static func assignmentFieldsOnly(
-        task: QualityTaskDto,
-        userId: String?,
-        hasAssignPermission: Bool
-    ) -> Bool {
-        if nonAssignmentFieldsLocked(task: task) { return true }
-        if !isCurrentUserCreator(task: task, userId: userId) { return true }
-        if hasAssignPermission, task.reviewer?.id != userId { return true }
-        return false
+        return nil
     }
 }

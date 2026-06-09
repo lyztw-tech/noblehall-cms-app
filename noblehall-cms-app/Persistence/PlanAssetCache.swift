@@ -43,7 +43,6 @@ enum PlanAssetCache {
     /// App 啟動／進入專案後：下載全部品質平面圖檔與座標點至本機暫存。
     static func preloadAll(
         projectCode: String,
-        spaceId: String,
         context: ModelContext,
         force: Bool = false
     ) async {
@@ -52,15 +51,13 @@ enum PlanAssetCache {
 
         do {
             let drawings = try await QualityTaskAPI.allQualityDrawings(
-                projectCode: projectCode,
-                spaceId: spaceId
+                projectCode: projectCode
             )
             store.begin(total: drawings.count)
             var done = 0
             for item in drawings {
                 try await cacheOne(
                     projectCode: projectCode,
-                    spaceId: spaceId,
                     listItem: item,
                     context: context
                 )
@@ -68,7 +65,7 @@ enum PlanAssetCache {
                 store.updateProgress(done: done, total: drawings.count)
                 try context.save()
             }
-            try await AddTaskFormCache.preload(projectCode: projectCode, spaceId: spaceId, context: context)
+            try await AddTaskFormCache.preload(projectCode: projectCode, context: context)
             await repairCachedPNGs(projectCode: projectCode, context: context)
             try context.save()
             let stats = try stats(projectCode: projectCode, context: context)
@@ -168,7 +165,7 @@ enum PlanAssetCache {
     }
 
     /// 下載平面圖二進位（預載與連線時補寫快取共用）。
-    static func downloadImageData(file: DrawingFileDto?, spaceId: String) async -> Data? {
+    static func downloadImageData(file: DrawingFileDto?) async -> Data? {
         guard let file else { return nil }
         var candidates: [URL] = []
         let (primary, fallback) = planImageURLs(for: file)
@@ -182,7 +179,7 @@ enum PlanAssetCache {
             }
         }
         for url in candidates {
-            if let data = try? await APIClient.shared.fetchBinary(url: url, spaceId: spaceId),
+            if let data = try? await APIClient.shared.fetchBinary(url: url),
                isValidPlanBinary(data) {
                 return data
             }
@@ -312,7 +309,6 @@ enum PlanAssetCache {
 
     private static func cacheOne(
         projectCode: String,
-        spaceId: String,
         listItem: QualityDrawingListItemDto,
         context: ModelContext
     ) async throws {
@@ -321,22 +317,20 @@ enum PlanAssetCache {
 
         async let detailTask = QualityTaskAPI.drawingDetail(
             projectCode: projectCode,
-            qualityDrawingId: drawingId,
-            spaceId: spaceId
+            qualityDrawingId: drawingId
         )
         async let pointsTask = QualityTaskAPI.roomPoints(
             projectCode: projectCode,
-            qualityDrawingId: drawingId,
-            spaceId: spaceId
+            qualityDrawingId: drawingId
         )
         let (detail, points) = try await (detailTask, pointsTask)
         let pointsData = try encoder.encode(points)
 
         var written: WrittenPlanImage?
-        var imageData = await downloadImageData(file: detail.drawing.file, spaceId: spaceId)
+        var imageData = await downloadImageData(file: detail.drawing.file)
         if imageData == nil {
             try await Task.sleep(nanoseconds: 500_000_000)
-            imageData = await downloadImageData(file: detail.drawing.file, spaceId: spaceId)
+            imageData = await downloadImageData(file: detail.drawing.file)
         }
         if let imageData {
             written = await writePlanImageFiles(

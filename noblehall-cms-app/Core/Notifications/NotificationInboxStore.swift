@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import UserNotifications
 
-/// 通知收件匣（與 Web `app-notification` store 對齊）：列表、未讀、SSE、已讀。
+/// 通知收件匣（與 Web `app-notification` store 對齊）：列表、未讀、輪詢、已讀。
 @MainActor
 @Observable
 final class NotificationInboxStore {
@@ -23,7 +23,6 @@ final class NotificationInboxStore {
     private var session: SessionStore?
     private var pollingTask: Task<Void, Never>?
     private var hasLoadedInboxOnce = false
-    private var connectedSpaceId: String?
     private var lastUnreadForPushCompare = 0
     private var hasEstablishedUnreadBaseline = false
 
@@ -32,14 +31,13 @@ final class NotificationInboxStore {
     }
 
     func startIfLoggedIn() {
-        guard let session, session.isLoggedIn, let spaceId = session.spaceId, !spaceId.isEmpty else {
+        guard let session, session.isLoggedIn else {
             stop()
             return
         }
         Task {
             isPushAuthorized = await NotificationLocalPush.requestAuthorizationIfNeeded()
             await syncFromServer()
-            restartSSE(spaceId: spaceId)
             startPolling()
         }
     }
@@ -47,10 +45,8 @@ final class NotificationInboxStore {
     func stop() {
         pollingTask?.cancel()
         pollingTask = nil
-        connectedSpaceId = nil
         lastUnreadForPushCompare = 0
         hasEstablishedUnreadBaseline = false
-        Task { await NotificationSSEClient.shared.stop() }
         items = []
         unreadCount = 0
         page = 1
@@ -65,9 +61,9 @@ final class NotificationInboxStore {
     }
 
     func refreshUnreadCount() async {
-        guard let spaceId = session?.spaceId else { return }
+        guard let session, session.isLoggedIn else { return }
         do {
-            let newCount = try await NotificationAPI.unreadCount(spaceId: spaceId)
+            let newCount = try await NotificationAPI.unreadCount()
             unreadCount = newCount
             lastUnreadForPushCompare = newCount
             hasEstablishedUnreadBaseline = true
@@ -80,7 +76,7 @@ final class NotificationInboxStore {
     }
 
     func fetchInbox(reset: Bool) async {
-        guard let spaceId = session?.spaceId else { return }
+        guard let session, session.isLoggedIn else { return }
         if reset {
             isLoading = true
             page = 1
@@ -94,7 +90,7 @@ final class NotificationInboxStore {
         }
         let targetPage = reset ? 1 : page + 1
         do {
-            let res = try await NotificationAPI.list(page: targetPage, limit: limit, spaceId: spaceId)
+            let res = try await NotificationAPI.list(page: targetPage, limit: limit)
             if reset {
                 items = res.data
             } else {
@@ -115,7 +111,7 @@ final class NotificationInboxStore {
     }
 
     func markRead(id: String) async {
-        guard let spaceId = session?.spaceId else { return }
+        guard let session, session.isLoggedIn else { return }
         if let idx = items.firstIndex(where: { $0.id == id }), items[idx].readAt == nil {
             items[idx] = items[idx].markedRead()
             unreadCount = max(0, unreadCount - 1)
@@ -123,7 +119,7 @@ final class NotificationInboxStore {
             await updateApplicationBadge()
         }
         do {
-            try await NotificationAPI.markRead(id: id, spaceId: spaceId)
+            try await NotificationAPI.markRead(id: id)
             await refreshUnreadCount()
         } catch {
             await fetchInbox(reset: true)
@@ -131,14 +127,14 @@ final class NotificationInboxStore {
     }
 
     func markAllRead() async {
-        guard let spaceId = session?.spaceId else { return }
+        guard let session, session.isLoggedIn else { return }
         let now = Date()
         items = items.map { $0.readAt == nil ? $0.markedRead(at: now) : $0 }
         unreadCount = 0
         lastUnreadForPushCompare = 0
         await updateApplicationBadge()
         do {
-            _ = try await NotificationAPI.markAllRead(spaceId: spaceId)
+            _ = try await NotificationAPI.markAllRead()
             await refreshUnreadCount()
         } catch {
             await fetchInbox(reset: true)
@@ -146,7 +142,7 @@ final class NotificationInboxStore {
     }
 
     func clearAll() async {
-        guard let spaceId = session?.spaceId else { return }
+        guard let session, session.isLoggedIn else { return }
         let snapshot = items
         let previousUnread = unreadCount
         items = []
@@ -158,7 +154,7 @@ final class NotificationInboxStore {
         loadError = nil
         await updateApplicationBadge()
         do {
-            _ = try await NotificationAPI.clearAll(spaceId: spaceId)
+            _ = try await NotificationAPI.clearAll()
             await refreshUnreadCount()
         } catch {
             items = snapshot
@@ -179,33 +175,6 @@ final class NotificationInboxStore {
 
     func handleDeepLinkString(_ link: String) -> NotificationDeepLink? {
         NotificationDeepLink.parse(link: link)
-    }
-
-    private func restartSSE(spaceId: String) {
-        Task { await NotificationSSEClient.shared.stop() }
-        connectedSpaceId = spaceId
-        Task {
-            await NotificationSSEClient.shared.start(spaceId: spaceId) { [weak self] event in
-                await self?.handleSSE(event)
-            }
-        }
-    }
-
-    private func handleSSE(_ event: NotificationSSEEvent) async {
-        switch event.kind {
-        case .new(_, _, _):
-            await refreshUnreadCount()
-            if hasLoadedInboxOnce {
-                await fetchInbox(reset: true)
-            }
-        case .readUpdate:
-            await refreshUnreadCount()
-            if hasLoadedInboxOnce {
-                await fetchInbox(reset: true)
-            }
-        case .unknown:
-            await refreshUnreadCount()
-        }
     }
 
     private func startPolling() {

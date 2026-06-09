@@ -46,16 +46,13 @@ enum QualityTaskStatusStyle {
             )
         default:
             return Colors(
-                foreground: NobleHallTheme.brandGold,
-                background: NobleHallTheme.brandGold.opacity(0.12)
+                foreground: AppTheme.brandGold,
+                background: AppTheme.brandGold.opacity(0.12)
             )
         }
     }
 
     private static func normalize(_ raw: String?) -> String {
-        (raw ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
+        QualityTaskEditEligibility.normalizedStatus(raw)
     }
 }

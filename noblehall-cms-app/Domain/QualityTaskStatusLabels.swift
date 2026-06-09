@@ -3,11 +3,7 @@ import Foundation
 /// 與 Web `QUALITY_TASK_STATUS_CONFIG` 標籤對齊。
 enum QualityTaskStatusLabels {
     static func displayName(for status: String?) -> String {
-        let normalized = (status ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-            .replacingOccurrences(of: " ", with: "_")
+        let normalized = QualityTaskEditEligibility.normalizedStatus(status)
         guard !normalized.isEmpty else { return "—" }
         switch normalized {
         case "info": return "資訊"
