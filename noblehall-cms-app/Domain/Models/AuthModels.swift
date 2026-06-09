@@ -14,10 +14,8 @@ nonisolated struct UserDto: Codable, Sendable, Identifiable {
     var phone: String? { nil }
     var permissions: [String]? { nil }
     var role: String? { systemRole }
-    var spaceId: String? { tenantId }
     var isSystemAdmin: Bool? { systemRole == "platform_admin" }
     var mustChangePassword: Bool? { false }
-    var spaceIds: [String]? { tenantId.map { [$0] } }
 }
 
 nonisolated struct LoginRequestBody: Encodable, Sendable {

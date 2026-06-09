@@ -90,3 +90,16 @@ struct ProjectListResponseDto: Decodable, Sendable {
             ?? PaginationDto(page: 1, limit: data.count, total: data.count)
     }
 }
+
+struct ModulePermissionDto: Decodable, Sendable {
+    let canCreate: Bool
+    let canRead: Bool
+    let canUpdate: Bool
+    let canDelete: Bool
+    let canAssign: Bool?
+    let canCapture: Bool?
+}
+
+struct ProjectPermissionsDto: Decodable, Sendable {
+    let modules: [String: ModulePermissionDto]
+}

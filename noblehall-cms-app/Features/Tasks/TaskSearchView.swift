@@ -19,7 +19,7 @@ struct TaskSearchView: View {
 
     var body: some View {
         NavigationStack {
-            NobleHallNativeSearchScreen(
+            AppNativeSearchScreen(
                 query: $query,
                 prompt: "任務、空間、圖面、執行人",
                 emptyTitle: "搜尋任務",
@@ -46,7 +46,7 @@ struct TaskSearchView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .background(NobleHallTheme.warmBackground)
+                    .background(AppTheme.warmBackground)
                     .dismissKeyboardOnScroll()
                 }
             }

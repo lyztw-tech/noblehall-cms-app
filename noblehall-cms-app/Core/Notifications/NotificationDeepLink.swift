@@ -88,8 +88,8 @@ struct NotificationDeepLink: Sendable, Equatable {
 
 extension Notification.Name {
     /// `userInfo["link"]` 為通知深連結字串。
-    static let nobleHallNotificationDeepLink = Notification.Name("nobleHall.notification.deepLink")
-    static let nobleHallRemoteNotificationReceived = Notification.Name("NobleHall.remoteNotification.received")
-    static let nobleHallRemoteNotificationTokenUpdated = Notification.Name("NobleHall.remoteNotification.tokenUpdated")
-    static let nobleHallRemoteNotificationTokenFailed = Notification.Name("NobleHall.remoteNotification.tokenFailed")
+    static let appNotificationDeepLink = Notification.Name("app.notification.deepLink")
+    static let appRemoteNotificationReceived = Notification.Name("app.remoteNotification.received")
+    static let appRemoteNotificationTokenUpdated = Notification.Name("app.remoteNotification.tokenUpdated")
+    static let appRemoteNotificationTokenFailed = Notification.Name("app.remoteNotification.tokenFailed")
 }

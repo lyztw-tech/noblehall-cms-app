@@ -81,22 +81,22 @@ struct RequiredAppUpdateView: View {
 
     var body: some View {
         ZStack {
-            NobleHallTheme.warmBackground
+            AppTheme.warmBackground
                 .ignoresSafeArea()
 
             VStack(spacing: 24) {
                 Image(systemName: "arrow.down.app.fill")
                     .font(.system(size: 54, weight: .semibold))
-                    .foregroundStyle(NobleHallTheme.brandGold)
+                    .foregroundStyle(AppTheme.brandGold)
 
                 VStack(spacing: 10) {
                     Text("需要更新 App")
                         .font(.title2.weight(.bold))
-                        .foregroundStyle(NobleHallTheme.ink)
+                        .foregroundStyle(AppTheme.ink)
 
                     Text(update.message ?? "目前版本 \(update.currentVersion) 已不再支援。請更新至最新版本後繼續使用。")
                         .font(.body)
-                        .foregroundStyle(NobleHallTheme.secondaryInk)
+                        .foregroundStyle(AppTheme.secondaryInk)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -106,28 +106,28 @@ struct RequiredAppUpdateView: View {
                     Text("最新版本：\(update.latestVersion)")
                 }
                 .font(.footnote.weight(.medium))
-                .foregroundStyle(NobleHallTheme.secondaryInk)
+                .foregroundStyle(AppTheme.secondaryInk)
 
                 if let releaseNotes = update.releaseNotes, !releaseNotes.isEmpty {
                     Text(releaseNotes)
                         .font(.footnote)
-                        .foregroundStyle(NobleHallTheme.secondaryInk)
+                        .foregroundStyle(AppTheme.secondaryInk)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(NobleHallTheme.brandGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(AppTheme.brandGold.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
 
                 Button(action: onOpenAppStore) {
                     Text("前往 App Store 更新")
                 }
-                .buttonStyle(NobleHallPrimaryButtonStyle())
+                .buttonStyle(AppPrimaryButtonStyle())
                 .disabled(update.appStoreURL == nil)
             }
             .padding(28)
             .frame(maxWidth: 420)
-            .nobleHallCard(cornerRadius: 28)
+            .appCard(cornerRadius: 28)
             .padding(24)
         }
     }

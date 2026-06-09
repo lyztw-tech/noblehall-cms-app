@@ -40,8 +40,8 @@ enum QualityTaskEditEligibility {
 
     /// 與 Web `basicInfoNonAssignmentFieldsLocked`：建立逾 N 日後，非指派欄位鎖定（仍允許開啟編輯改審查人等）。
     static func nonAssignmentFieldsLocked(task: QualityTaskDto) -> Bool {
-        guard allowsBasicInfoEdit(task: task) else { return false }
-        return !isCreatedWithinLastCalendarDays(task.createdAt, days: basicInfoFullEditWindowDays)
+        !allowsBasicInfoEdit(task: task)
+            || !isCreatedWithinLastCalendarDays(task.createdAt, days: basicInfoFullEditWindowDays)
     }
 
     static func isCurrentUserCreator(task: QualityTaskDto, userId: String?) -> Bool {
@@ -51,13 +51,16 @@ enum QualityTaskEditEligibility {
     }
 
     /// 無法開啟「編輯任務」時的人類可讀原因（`nil` 表示可開啟）。
-    static func taskEditSheetBlockedReason(task: QualityTaskDto, userId: String?, isOnline: Bool, hasQualityDrawing: Bool) -> String? {
+    static func taskEditSheetBlockedReason(
+        task: QualityTaskDto,
+        userId: String?,
+        isOnline: Bool,
+        hasQualityDrawing: Bool,
+        canAssignQualityTasks: Bool
+    ) -> String? {
         if !isOnline { return "離線時無法編輯任務。" }
         if !hasQualityDrawing { return "缺少品質圖面資訊，無法更新任務。" }
-        if !allowsBasicInfoEdit(task: task) {
-            return "任務已進入審核、負責人確認或已完成，無法編輯基本資料。"
-        }
-        if !isCurrentUserCreator(task: task, userId: userId) {
+        if !isCurrentUserCreator(task: task, userId: userId), !canAssignQualityTasks {
             return "僅限建立任務的人員可編輯。"
         }
         return nil

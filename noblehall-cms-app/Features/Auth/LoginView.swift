@@ -17,7 +17,7 @@ struct LoginView: View {
                         .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
                 }
             }
-            .nobleHallScreen()
+            .appScreen()
             .dismissKeyboardOnScroll()
             .toolbar(.hidden, for: .navigationBar)
         }
@@ -32,7 +32,7 @@ struct LoginView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("帳號")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(NobleHallTheme.ink)
+                                .foregroundStyle(AppTheme.ink)
                             TextField("請輸入帳號", text: $account)
                                 .textContentType(.username)
                                 .keyboardType(.default)
@@ -40,18 +40,18 @@ struct LoginView: View {
                                 .autocorrectionDisabled()
                                 .padding(14)
                                 .background(Color.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(NobleHallTheme.hairline, lineWidth: 1))
+                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(AppTheme.hairline, lineWidth: 1))
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text("密碼")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(NobleHallTheme.ink)
+                                .foregroundStyle(AppTheme.ink)
                             SecureField("請輸入密碼", text: $password)
                                 .textContentType(.password)
                                 .padding(14)
                                 .background(Color.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(NobleHallTheme.hairline, lineWidth: 1))
+                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(AppTheme.hairline, lineWidth: 1))
                         }
 
                         if let errorMessage {
@@ -78,27 +78,29 @@ struct LoginView: View {
                                 }
                             }
                         }
-                        .buttonStyle(NobleHallPrimaryButtonStyle())
+                        .buttonStyle(AppPrimaryButtonStyle())
                         .disabled(account.isEmpty || password.isEmpty || isLoading)
                         .opacity(account.isEmpty || password.isEmpty ? 0.55 : 1)
                     }
                     .padding(20)
-                    .nobleHallCard()
+                    .appCard()
 
-                    DisclosureGroup {
-                        Text(AppConfiguration.developerFacingAPIStatusLine)
-                            .font(.caption)
-                            .foregroundStyle(NobleHallTheme.secondaryInk)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 8)
-                    } label: {
-                        Label("環境與連線資訊", systemImage: "network")
-                            .font(.footnote.weight(.medium))
-                            .foregroundStyle(NobleHallTheme.secondaryInk)
+                    if AppConfiguration.shouldShowDeveloperConnectionInfo {
+                        DisclosureGroup {
+                            Text(AppConfiguration.developerFacingAPIStatusLine)
+                                .font(.caption)
+                                .foregroundStyle(AppTheme.secondaryInk)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 8)
+                        } label: {
+                            Label("環境與連線資訊", systemImage: "network")
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(AppTheme.secondaryInk)
+                        }
+                        .padding(16)
+                        .appCard(cornerRadius: 18)
                     }
-                    .padding(16)
-                    .nobleHallCard(cornerRadius: 18)
         }
     }
 

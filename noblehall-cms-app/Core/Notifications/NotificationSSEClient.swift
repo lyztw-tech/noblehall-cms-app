@@ -17,9 +17,9 @@ actor NotificationSSEClient {
     private var task: Task<Void, Never>?
     private var generation: UInt = 0
 
-    func start(spaceId: String, onEvent: @escaping @MainActor (NotificationSSEEvent) async -> Void) {
+    func start(onEvent: @escaping @MainActor (NotificationSSEEvent) async -> Void) {
         stop()
-        _ = (spaceId, onEvent)
+        _ = onEvent
     }
 
     func stop() {
@@ -29,14 +29,13 @@ actor NotificationSSEClient {
     }
 
     private func runLoop(
-        spaceId: String,
         generation: UInt,
         onEvent: @escaping @MainActor (NotificationSSEEvent) async -> Void
     ) async {
         var retry = 0
         while !Task.isCancelled, self.generation == generation {
             do {
-                try await consumeStream(spaceId: spaceId, onEvent: onEvent)
+                try await consumeStream(onEvent: onEvent)
                 retry = 0
             } catch {
                 if Task.isCancelled || self.generation != generation { return }
@@ -48,7 +47,6 @@ actor NotificationSSEClient {
     }
 
     private func consumeStream(
-        spaceId: String,
         onEvent: @escaping @MainActor (NotificationSSEEvent) async -> Void
     ) async throws {
         try AppConfiguration.validateAPIBaseIsSecureForRequests()
@@ -57,8 +55,7 @@ actor NotificationSSEClient {
         request.httpMethod = HTTPMethod.GET.rawValue
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        request.setValue(spaceId, forHTTPHeaderField: "x-space-id")
-        request.setValue("NoblehallCMS-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
+        request.setValue("ConstructionDashboard-iOS/\(AppMetadata.version)", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = .infinity
 
         let config = URLSessionConfiguration.default

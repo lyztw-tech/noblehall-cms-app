@@ -5,14 +5,13 @@ enum AuthAPI: Sendable {
         let envelope: APIDataEnvelope<LoginResponseDto> = try await APIClient.shared.send(
             .POST,
             path: "auth/login",
-            body: LoginRequestBody(account: account, password: password),
-            spaceId: nil
+            body: LoginRequestBody(account: account, password: password)
         )
         return envelope.data
     }
 
-    static func fetchMe(spaceId: String? = nil) async throws -> UserDto {
-        let envelope: APIDataEnvelope<UserDto> = try await APIClient.shared.send(.GET, path: "auth/me", spaceId: spaceId)
+    static func fetchMe() async throws -> UserDto {
+        let envelope: APIDataEnvelope<UserDto> = try await APIClient.shared.send(.GET, path: "auth/me")
         return envelope.data
     }
 
@@ -23,13 +22,12 @@ enum AuthAPI: Sendable {
         let envelope: APIDataEnvelope<RefreshTokenResponseDto> = try await APIClient.shared.send(
             .POST,
             path: "auth/refresh",
-            body: RefreshTokenRequestBody(refreshToken: refreshToken),
-            spaceId: nil
+            body: RefreshTokenRequestBody(refreshToken: refreshToken)
         )
         AuthTokenStore.save(accessToken: envelope.data.accessToken, refreshToken: envelope.data.refreshToken)
     }
 
     static func logout() async throws {
-        try await APIClient.shared.sendVoid(.POST, path: "auth/logout", spaceId: nil)
+        try await APIClient.shared.sendVoid(.POST, path: "auth/logout")
     }
 }

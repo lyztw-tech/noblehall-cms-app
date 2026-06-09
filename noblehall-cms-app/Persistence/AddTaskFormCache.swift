@@ -60,18 +60,17 @@ enum AddTaskFormCache {
         )
     }
 
-    static func preload(projectCode: String, spaceId: String, context: ModelContext) async throws {
-        async let proj = ProjectAPI.projectDetail(projectCode: projectCode, spaceId: spaceId)
-        async let mem = QualityTaskAPI.allProjectMembers(projectCode: projectCode, spaceId: spaceId)
-        async let grp = QualityTaskAPI.listProjectGroups(projectCode: projectCode, spaceId: spaceId)
-        let (project, members, groupsRes) = try await (proj, mem, grp)
+    static func preload(projectCode: String, context: ModelContext) async throws {
+        async let mem = QualityTaskAPI.allProjectMembers(projectCode: projectCode)
+        async let grp = QualityTaskAPI.listProjectGroups(projectCode: projectCode)
+        let (members, groupsRes) = try await (mem, grp)
         var categories: [DropdownOptionItemDto] = []
-        if let cats = try? await QualityTaskAPI.categoryOptions(projectId: project.id, spaceId: spaceId) {
+        if let cats = try? await QualityTaskAPI.categoryOptions(projectId: projectCode) {
             categories = cats.options
         }
         try save(
             projectCode: projectCode,
-            projectUUID: project.id,
+            projectUUID: projectCode,
             members: members,
             groups: groupsRes.data,
             categories: categories,

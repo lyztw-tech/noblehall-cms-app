@@ -655,6 +655,8 @@ struct EmptyRequestBody: Encodable, Sendable {}
 
 struct UpdateExecutionBody: Encodable, Sendable {
     let executionReply: String?
+    /// 更新後要「保留的完整附件集合」（既有保留 + 新上傳）。nil 表示不動附件。
+    var attachmentIds: [String]? = nil
 }
 
 enum QualityTaskReviewResult: String, Encodable, Sendable {
@@ -808,13 +810,15 @@ struct UpdateQualityTaskBody: Encodable, Sendable {
     let dueDate: String?
     /// 分別控制；避免僅載入到成員列表卻用 `null` 誤清類別（或相反）。
     let includeCategoryId: Bool
+    let includeExecutorId: Bool
     let includeReviewerId: Bool
     /// 空字串表示 JSON `null`（清除）；僅在對應 `include*` 為 `true` 時輸出鍵。
     let categoryId: String
+    let executorId: String
     let reviewerId: String
 
     enum CodingKeys: String, CodingKey {
-        case name, description, priority, status, dueAt, categoryId, reviewerId
+        case name, description, priority, status, dueAt, categoryId, executorId, reviewerId
     }
 
     func encode(to encoder: Encoder) throws {
@@ -837,6 +841,13 @@ struct UpdateQualityTaskBody: Encodable, Sendable {
                 try c.encodeNil(forKey: .categoryId)
             } else {
                 try c.encode(categoryId, forKey: .categoryId)
+            }
+        }
+        if includeExecutorId {
+            if executorId.isEmpty {
+                try c.encodeNil(forKey: .executorId)
+            } else {
+                try c.encode(executorId, forKey: .executorId)
             }
         }
         if includeReviewerId {

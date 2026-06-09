@@ -19,8 +19,7 @@ enum NotificationAPI: Sendable {
     static func list(
         page: Int = 1,
         limit: Int = 20,
-        unreadOnly: Bool = false,
-        spaceId: String?
+        unreadOnly: Bool = false
     ) async throws -> NotificationListDto {
         var items = [
             URLQueryItem(name: "page", value: String(page)),
@@ -32,49 +31,44 @@ enum NotificationAPI: Sendable {
         return try await APIClient.shared.send(
             .GET,
             path: "notifications",
-            queryItems: items,
-            spaceId: spaceId
+            queryItems: items
         )
     }
 
-    static func unreadCount(spaceId: String?) async throws -> Int {
+    static func unreadCount() async throws -> Int {
         let dto: APIDataEnvelope<UnreadCountDto> = try await APIClient.shared.send(
             .GET,
-            path: "notifications/unread-count",
-            spaceId: spaceId
+            path: "notifications/unread-count"
         )
         return dto.data.count
     }
 
-    static func markRead(id: String, spaceId: String?) async throws {
+    static func markRead(id: String) async throws {
         try await APIClient.shared.sendVoid(
             .PATCH,
-            path: "notifications/\(id)/read",
-            spaceId: spaceId
+            path: "notifications/\(id)/read"
         )
     }
 
-    static func markAllRead(spaceId: String?) async throws -> Int {
+    static func markAllRead() async throws -> Int {
         let dto: APIDataEnvelope<MarkAllReadResponseDto> = try await APIClient.shared.send(
             .PATCH,
             path: "notifications/read-all",
-            body: EmptyRequestBody(),
-            spaceId: spaceId
+            body: EmptyRequestBody()
         )
         return dto.data.count
     }
 
-    static func clearAll(spaceId: String?) async throws -> Int {
+    static func clearAll() async throws -> Int {
         let dto: APIDataEnvelope<MarkAllReadResponseDto> = try await APIClient.shared.send(
             .PATCH,
             path: "notifications/dismiss-all",
-            body: EmptyRequestBody(),
-            spaceId: spaceId
+            body: EmptyRequestBody()
         )
         return dto.data.count
     }
 
-    static func registerAPNsDeviceToken(_ token: String, spaceId: String?) async throws {
+    static func registerAPNsDeviceToken(_ token: String) async throws {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let deviceName = await MainActor.run { UIDevice.current.name }
@@ -89,8 +83,7 @@ enum NotificationAPI: Sendable {
                 deviceId: deviceId,
                 appVersion: AppMetadata.version,
                 deviceName: deviceName
-            ),
-            spaceId: spaceId
+            )
         )
     }
 }

@@ -116,8 +116,7 @@ actor APIClient {
         _ method: HTTPMethod,
         path: String,
         queryItems: [URLQueryItem]? = nil,
-        body: Encodable? = nil,
-        spaceId: String?
+        body: Encodable? = nil
     ) async throws -> R {
         let data = try await perform(method, path: path, queryItems: queryItems, body: body)
         do {
@@ -132,14 +131,13 @@ actor APIClient {
         _ method: HTTPMethod,
         path: String,
         queryItems: [URLQueryItem]? = nil,
-        body: Encodable? = nil,
-        spaceId: String?
+        body: Encodable? = nil
     ) async throws {
         _ = try await perform(method, path: path, queryItems: queryItems, body: body)
     }
 
     /// 下載需登入的資源（例如 `GET /files/:id`）。勿用 `AsyncImage` 直連此類 URL。
-    func fetchBinary(url: URL, spaceId: String?) async throws -> Data {
+    func fetchBinary(url: URL) async throws -> Data {
         try AppConfiguration.validateAPIBaseIsSecureForRequests()
         let fetchURL = Self.normalizedAssetFetchURL(url) ?? url
         guard Self.isSameOrigin(asAPIHost: fetchURL, serverOrigin: AppConfiguration.serverOriginURL) else {
@@ -171,8 +169,7 @@ actor APIClient {
         path: String,
         queryItems: [URLQueryItem]? = nil,
         fields: [String: String],
-        files: [MultipartFilePart],
-        spaceId: String?
+        files: [MultipartFilePart]
     ) async throws -> R {
         try AppConfiguration.validateAPIBaseIsSecureForRequests()
         var components = URLComponents(url: AppConfiguration.apiRootURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)

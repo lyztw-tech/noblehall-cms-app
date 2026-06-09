@@ -48,14 +48,14 @@ struct NotificationInboxView: View {
                     .listStyle(.insetGrouped)
                 }
             }
-            .nobleHallGroupedListStyle()
+            .appGroupedListStyle()
             .navigationTitle("通知")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if showsCloseButton {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("關閉") { dismiss() }
-                            .foregroundStyle(NobleHallTheme.secondaryInk)
+                            .foregroundStyle(AppTheme.secondaryInk)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -72,7 +72,7 @@ struct NotificationInboxView: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
-                            .foregroundStyle(NobleHallTheme.brandGold)
+                            .foregroundStyle(AppTheme.brandGold)
                     }
                     .disabled(inbox.items.isEmpty && inbox.unreadCount == 0)
                 }
@@ -101,37 +101,37 @@ private struct NotificationInboxRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Circle()
-                .fill(item.isUnread ? NobleHallTheme.brandGold : NobleHallTheme.hairline.opacity(0.5))
+                .fill(item.isUnread ? AppTheme.brandGold : AppTheme.hairline.opacity(0.5))
                 .frame(width: 8, height: 8)
                 .padding(.top, 6)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
                     .font(.subheadline.weight(item.isUnread ? .semibold : .regular))
-                    .foregroundStyle(NobleHallTheme.ink)
+                    .foregroundStyle(AppTheme.ink)
                     .multilineTextAlignment(.leading)
                 if let body = item.body, !body.isEmpty {
                     Text(body)
                         .font(.footnote)
-                        .foregroundStyle(NobleHallTheme.secondaryInk)
+                        .foregroundStyle(AppTheme.secondaryInk)
                         .lineLimit(2)
                 }
                 HStack(spacing: 6) {
-                    if let code = item.projectCode, !code.isEmpty {
-                        Text(code)
+                    if let name = item.projectName, !name.isEmpty {
+                        Text(name)
                             .font(.caption2.weight(.medium))
-                            .foregroundStyle(NobleHallTheme.brandGold)
+                            .foregroundStyle(AppTheme.brandGold)
                     }
                     Text(AppDateTimeFormat.fullDateTime(item.createdAt))
                         .font(.caption2)
-                        .foregroundStyle(NobleHallTheme.secondaryInk)
+                        .foregroundStyle(AppTheme.secondaryInk)
                 }
             }
             Spacer(minLength: 0)
             if item.link != nil {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(NobleHallTheme.secondaryInk)
+                    .foregroundStyle(AppTheme.secondaryInk)
             }
         }
         .padding(.vertical, 4)

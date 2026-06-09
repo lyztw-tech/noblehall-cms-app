@@ -6,10 +6,11 @@ struct TaskDetailTaskEditSheet: View {
     let projectCode: String
     let qualityDrawingId: String
     let taskId: String
-    let spaceId: String
     let initialTask: QualityTaskDto
-    /// 與 Web `basicInfoNonAssignmentFieldsLocked`：建立逾 3 日僅能改審查人等。
+    /// 與 Web `basicInfoNonAssignmentFieldsLocked`：建立逾 3 日僅能改審查人、執行人等指派欄位。
     let assignmentFieldsOnly: Bool
+    /// 非建立者但具指派權限時，只可調整執行人。
+    let executorOnly: Bool
     var onCancel: () -> Void
     var onSaved: () async -> Void
 
@@ -22,6 +23,7 @@ struct TaskDetailTaskEditSheet: View {
     @State private var includeDueDate: Bool
     @State private var dueDate: Date
     @State private var categoryId: String
+    @State private var executorId: String
     @State private var reviewerId: String
     @State private var formCacheLoaded = false
     @State private var categories: [DropdownOptionItemDto] = []
@@ -44,18 +46,18 @@ struct TaskDetailTaskEditSheet: View {
         projectCode: String,
         qualityDrawingId: String,
         taskId: String,
-        spaceId: String,
         initialTask: QualityTaskDto,
         assignmentFieldsOnly: Bool,
+        executorOnly: Bool,
         onCancel: @escaping () -> Void,
         onSaved: @escaping () async -> Void
     ) {
         self.projectCode = projectCode
         self.qualityDrawingId = qualityDrawingId
         self.taskId = taskId
-        self.spaceId = spaceId
         self.initialTask = initialTask
         self.assignmentFieldsOnly = assignmentFieldsOnly
+        self.executorOnly = executorOnly
         self.onCancel = onCancel
         self.onSaved = onSaved
 
@@ -77,6 +79,7 @@ struct TaskDetailTaskEditSheet: View {
         _dueDate = State(initialValue: initialTask.dueDate ?? Date())
 
         _categoryId = State(initialValue: initialTask.categoryId ?? "")
+        _executorId = State(initialValue: initialTask.executorId ?? "")
         _reviewerId = State(initialValue: initialTask.reviewer?.id ?? "")
     }
 
@@ -93,7 +96,9 @@ struct TaskDetailTaskEditSheet: View {
                 if assignmentFieldsOnly {
                     Section {
                         Text(
-                            "任務建立已超過三天，僅能修改審查人；執行對象請至網頁任務管理調整。其他欄位已鎖定。"
+                            executorOnly
+                                ? "您目前僅能修改執行人，其他欄位已鎖定。"
+                                : "任務建立已超過三天，僅能修改審查人與執行人，其他欄位已鎖定。"
                         )
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -138,6 +143,13 @@ struct TaskDetailTaskEditSheet: View {
                             .disabled(assignmentFieldsOnly)
                         }
                         if !members.isEmpty {
+                            Picker("執行人", selection: $executorId) {
+                                Text("（不選）").tag("")
+                                ForEach(members) { m in
+                                    Text(m.user.displayName ?? m.user.username ?? m.user.id)
+                                        .tag(m.user.id)
+                                }
+                            }
                             Picker("審查人", selection: $reviewerId) {
                                 Text("（不選）").tag("")
                                 ForEach(members) { m in
@@ -145,13 +157,14 @@ struct TaskDetailTaskEditSheet: View {
                                         .tag(m.user.id)
                                 }
                             }
+                            .disabled(executorOnly)
                         }
                     }
                 } else if formCacheLoaded {
                     Section {
                         Text(
                             assignmentFieldsOnly
-                                ? "快取中尚無專案成員，無法變更審查人。請稍後再試或至網頁任務管理處理。"
+                                ? "快取中尚無專案成員，無法變更審查人或執行人。請稍後再試或至網頁任務管理處理。"
                                 : "快取中尚無可選的類別或專案成員，無法在此變更審查人或類別。"
                         )
                         .font(.footnote)
@@ -161,7 +174,7 @@ struct TaskDetailTaskEditSheet: View {
                     Section {
                         Text(
                             assignmentFieldsOnly
-                                ? "未載入成員／類別快取：目前無法變更審查人。請連線後建立任務或稍後再試以載入成員列表。"
+                                ? "未載入成員／類別快取：目前無法變更審查人或執行人。請連線後建立任務或稍後再試以載入成員列表。"
                                 : "未載入成員／類別快取：僅可編輯名稱、說明、優先級、狀態與到期日。建立任務或稍後再試可載入完整選項。"
                         )
                         .font(.footnote)
@@ -169,7 +182,7 @@ struct TaskDetailTaskEditSheet: View {
                     }
                 }
             }
-            .nobleHallFormStyle()
+            .appFormStyle()
             .navigationTitle("編輯任務")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -211,7 +224,7 @@ struct TaskDetailTaskEditSheet: View {
             return
         }
         do {
-            try await AddTaskFormCache.preload(projectCode: projectCode, spaceId: spaceId, context: modelContext)
+            try await AddTaskFormCache.preload(projectCode: projectCode, context: modelContext)
             if let cached = try? AddTaskFormCache.load(projectCode: projectCode, context: modelContext) {
                 categories = cached.categories
                 members = cached.members
@@ -256,10 +269,12 @@ struct TaskDetailTaskEditSheet: View {
         }
 
         let includeCategoryId = !assignmentFieldsOnly && formCacheLoaded && !categories.isEmpty
-        let includeReviewerId = formCacheLoaded && !members.isEmpty
+        let includeAssignmentFields = formCacheLoaded && !members.isEmpty
+        let includeExecutorId = includeAssignmentFields
+        let includeReviewerId = includeAssignmentFields && !executorOnly
 
-        if assignmentFieldsOnly, !includeReviewerId {
-            saveError = "請連線並載入專案成員列表後，才能變更審查人。"
+        if assignmentFieldsOnly, !includeAssignmentFields {
+            saveError = "請連線並載入專案成員列表後，才能變更審查人或執行人。"
             return
         }
 
@@ -274,8 +289,10 @@ struct TaskDetailTaskEditSheet: View {
             includeDueDateInPayload: includeDueDateInPayload,
             dueDate: dueISO,
             includeCategoryId: includeCategoryId,
+            includeExecutorId: includeExecutorId,
             includeReviewerId: includeReviewerId,
             categoryId: categoryId,
+            executorId: executorId,
             reviewerId: reviewerId
         )
 
@@ -286,8 +303,7 @@ struct TaskDetailTaskEditSheet: View {
                 projectCode: projectCode,
                 qualityDrawingId: qualityDrawingId,
                 taskId: taskId,
-                body: body,
-                spaceId: spaceId
+                body: body
             )
             await onSaved()
         } catch {

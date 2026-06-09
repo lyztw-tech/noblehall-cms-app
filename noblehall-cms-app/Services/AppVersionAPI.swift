@@ -14,8 +14,7 @@ enum AppVersionAPI: Sendable {
         let envelope: APIDataEnvelope<AppVersionInfoDto> = try await APIClient.shared.send(
             .GET,
             path: "app/version",
-            queryItems: [URLQueryItem(name: "appId", value: "noblehall-cms")],
-            spaceId: nil
+            queryItems: [URLQueryItem(name: "appId", value: "noblehall-cms")]
         )
         return envelope.data
     }

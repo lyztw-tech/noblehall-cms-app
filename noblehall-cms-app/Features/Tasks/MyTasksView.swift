@@ -8,12 +8,6 @@ private struct MyTasksHeaderChromeHeightKey: PreferenceKey {
     }
 }
 
-private enum TaskListScope: String, CaseIterable, Identifiable {
-    case all = "全部"
-    case mineOnly = "指派給我"
-    var id: String { rawValue }
-}
-
 struct MyTasksView: View {
     let projectCode: String
     @Environment(SessionStore.self) private var session
@@ -27,8 +21,6 @@ struct MyTasksView: View {
     @State private var loadError: String?
     @State private var isLoading = false
     @State private var selectedRoute: TaskRoute?
-    /// 與 Web 任務管理總表對齊：預設「全部」；「指派給我」僅限執行對象為**個人**且 executorId 為本人（不含群組執行）。
-    @State private var listScope: TaskListScope = .all
     @State private var statusTab: QualityTaskStatusTab = .inProgress
     @State private var filterStore = TaskManagementFilterStore()
     @State private var showFilter = false
@@ -36,6 +28,7 @@ struct MyTasksView: View {
     @State private var addTaskDrawing: QualityDrawingListItemDto?
     @State private var showSearch = false
     @State private var headerChromeHeight: CGFloat = 52
+    @State private var projectCanAssignQualityTasks = false
 
     private static let offlineStatusDetail = "可瀏覽快取，連線後自動上傳"
 
@@ -49,13 +42,7 @@ struct MyTasksView: View {
     }
 
     private var pendingRowsForScope: [PendingTaskCreateOutbox] {
-        let uid = session.currentUser?.id
-        return pendingCreates.filter { row in
-            if listScope == .mineOnly {
-                return TaskCreateOutbox.pendingMatchesMineOnlyRow(row, userId: uid)
-            }
-            return true
-        }
+        pendingCreates
     }
 
     private var pendingAsListItems: [QualityTaskListItemDto] {
@@ -87,17 +74,24 @@ struct MyTasksView: View {
                 return task.reviewer?.id == userId
             }
             if normalizedStatus == "director_check" {
-                // 線上載入時會用詳情的 viewer.isProjectOwner 預先濾掉非負責人的項目。
                 return true
             }
             return false
         case .inProgress:
-            return true
+            return isCurrentUserExecutor(task, userId: userId)
         }
     }
 
+    private func isCurrentUserExecutor(_ task: QualityTaskListItemDto, userId: String?) -> Bool {
+        guard let userId, !userId.isEmpty else { return false }
+        if task.executorId == userId { return true }
+        if task.executor?.id == userId { return true }
+        return false
+    }
+
     private var canAssignQualityTasks: Bool {
-        hasPermission(resource: "quality_task", action: "assign")
+        projectCanAssignQualityTasks
+            || hasPermission(resource: "quality_task", action: "assign")
             || hasPermission(resource: "quality_task_management", action: "assign")
             || hasPermission(resource: "quality_task", action: "update")
     }
@@ -155,7 +149,7 @@ struct MyTasksView: View {
                                 task: t,
                                 showsDrawingAndStatus: false,
                                 showsPendingUploadIcon: t.id.hasPrefix("pending-"),
-                                showsExecutor: listScope == .all
+                                showsExecutor: true
                             )
                         }
                         .disabled(t.id.hasPrefix("pending-"))
@@ -194,42 +188,15 @@ struct MyTasksView: View {
 
                 myTasksHeaderChrome
             }
-            .nobleHallScreen()
+            .appScreen()
             .onPreferenceChange(MyTasksHeaderChromeHeightKey.self) { height in
                 if height > 0 { headerChromeHeight = height }
             }
             .navigationTitle("我的任務")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(NobleHallTheme.warmBackground, for: .navigationBar)
+            .toolbarBackground(AppTheme.warmBackground, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        ForEach(TaskListScope.allCases) { scope in
-                            Button {
-                                guard listScope != scope else { return }
-                                listScope = scope
-                                Task { await load(force: true) }
-                            } label: {
-                                HStack {
-                                    Text(scope.rawValue)
-                                    Spacer(minLength: 8)
-                                    if listScope == scope {
-                                        Image(systemName: "checkmark")
-                                            .font(.subheadline.weight(.semibold))
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text(listScope.rawValue)
-                            Image(systemName: "chevron.down")
-                                .font(.caption2.weight(.semibold))
-                        }
-                        .font(.subheadline.weight(.medium))
-                    }
-                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
                         showFilter = true
@@ -290,9 +257,9 @@ struct MyTasksView: View {
                 Task { await handlePendingNotificationFocusIfNeeded() }
             }
             .onChange(of: network.isConnected) { _, online in
-                guard online, let sid = session.spaceId else { return }
+                guard online else { return }
                 Task {
-                    await OutboxSync.flushPending(modelContext: modelContext, spaceId: sid, isOnline: true)
+                    await OutboxSync.flushPending(modelContext: modelContext, isOnline: true)
                     await load(force: true)
                 }
             }
@@ -342,8 +309,8 @@ struct MyTasksView: View {
                             .font(.title2.weight(.semibold))
                             .foregroundStyle(.white)
                             .frame(width: 56, height: 56)
-                            .background(NobleHallTheme.brandGold, in: Circle())
-                            .shadow(color: NobleHallTheme.brandGold.opacity(0.28), radius: 10, y: 5)
+                            .background(AppTheme.brandGold, in: Circle())
+                            .shadow(color: AppTheme.brandGold.opacity(0.28), radius: 10, y: 5)
                     }
                     .padding(.trailing, 20)
                     .padding(.bottom, 24)
@@ -358,7 +325,6 @@ struct MyTasksView: View {
               focus.projectCode == projectCode
         else { return }
 
-        listScope = .all
         await load(force: true)
 
         var resolvedStatus: String?
@@ -367,12 +333,10 @@ struct MyTasksView: View {
         if let row = mergedTasks.first(where: { $0.id == focus.taskId }) {
             resolvedStatus = row.status
             resolvedDrawingId = row.qualityDrawing?.id ?? resolvedDrawingId
-        } else if let sid = session.spaceId,
-                  let detail = try? await QualityTaskAPI.taskDetail(
-                      projectCode: projectCode,
-                      taskId: focus.taskId,
-                      spaceId: sid
-                  )
+        } else if let detail = try? await QualityTaskAPI.taskDetail(
+            projectCode: projectCode,
+            taskId: focus.taskId
+        )
         {
             resolvedStatus = detail.task.status
             resolvedDrawingId = resolvedQualityDrawingId(from: detail.task) ?? resolvedDrawingId
@@ -404,7 +368,7 @@ struct MyTasksView: View {
     private var myTasksHeaderChrome: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !network.isConnected {
-                NobleHallOfflineTag(
+                AppOfflineTag(
                     prefix: "離線中",
                     detail: Self.offlineStatusDetail
                 )
@@ -423,7 +387,7 @@ struct MyTasksView: View {
         .padding(.top, 8)
         .padding(.bottom, 10)
         .background {
-            NobleHallTheme.warmBackground
+            AppTheme.warmBackground
                 .ignoresSafeArea(edges: .top)
         }
         .background {
@@ -440,21 +404,11 @@ struct MyTasksView: View {
 
     private var emptyStateDescription: String {
         var parts: [String] = ["已套用「\(statusTab.rawValue)」"]
-        if listScope == .mineOnly { parts.append("「指派給我」") }
         if filterStore.activeConditionCount > 0 { parts.append("進階篩選") }
         return parts.joined() + "，目前沒有符合的品質任務。"
     }
 
     private func load(force _: Bool) async {
-        guard let sid = session.spaceId else {
-            loadError = "缺少租戶資訊，請重新登入。"
-            return
-        }
-        let executorFilter: String? = (listScope == .mineOnly) ? session.currentUser?.id : nil
-        if listScope == .mineOnly, executorFilter == nil {
-            loadError = "無法篩選「指派給我」：未取得使用者 id。"
-            return
-        }
         loadError = nil
         if !network.isConnected {
             if let rows = try? LocalTaskCache.tasks(projectCode: projectCode, context: modelContext) {
@@ -465,18 +419,17 @@ struct MyTasksView: View {
         isLoading = true
         defer { isLoading = false }
         do {
+            await refreshQualityTaskAssignPermission()
             let loaded = try await QualityTaskAPI.allProjectTasks(
                 projectCode: projectCode,
-                spaceId: sid,
                 filter: filterStore,
-                executorIds: executorFilter.map { [$0] },
                 onlyMyTasks: true
             )
-            let visible = await filterActionableMyTasks(loaded, spaceId: sid)
+            let visible = await filterActionableMyTasks(loaded)
             tasks = visible
             try LocalTaskCache.replaceProjectTasks(visible, projectCode: projectCode, context: modelContext)
             try modelContext.save()
-            await prefetchTaskDetails(visible, spaceId: sid)
+            await prefetchTaskDetails(visible)
         } catch {
             loadError = error.userFacingMessage
             if let rows = try? LocalTaskCache.tasks(projectCode: projectCode, context: modelContext) {
@@ -485,7 +438,16 @@ struct MyTasksView: View {
         }
     }
 
-    private func filterActionableMyTasks(_ rows: [QualityTaskListItemDto], spaceId: String) async -> [QualityTaskListItemDto] {
+    private func refreshQualityTaskAssignPermission() async {
+        do {
+            let permissions = try await ProjectAPI.myPermissions(projectCode: projectCode)
+            projectCanAssignQualityTasks = permissions.modules["construction.quality"]?.canAssign == true
+        } catch {
+            projectCanAssignQualityTasks = false
+        }
+    }
+
+    private func filterActionableMyTasks(_ rows: [QualityTaskListItemDto]) async -> [QualityTaskListItemDto] {
         let userId = session.currentUser?.id
         var output: [QualityTaskListItemDto] = []
 
@@ -501,17 +463,13 @@ struct MyTasksView: View {
                     output.append(row)
                 }
             case "director_check":
-                if let detail = try? await QualityTaskAPI.taskDetail(
-                    projectCode: projectCode,
-                    taskId: row.id,
-                    spaceId: spaceId
-                ),
-                   detail.viewer?.isProjectOwner == true
-                {
+                output.append(row)
+            case "in_progress", "rejected":
+                if isCurrentUserExecutor(row, userId: userId) {
                     output.append(row)
                 }
             default:
-                output.append(row)
+                break
             }
         }
 
@@ -519,15 +477,14 @@ struct MyTasksView: View {
     }
 
     /// 連線載入列表後，背景快取任務詳情供離線執行（平面圖＋任務資料）。
-    private func prefetchTaskDetails(_ items: [QualityTaskListItemDto], spaceId: String) async {
+    private func prefetchTaskDetails(_ items: [QualityTaskListItemDto]) async {
         for item in items where !item.id.hasPrefix("pending-") {
             let key = "\(projectCode)|\(item.id)"
             let existing = (try? modelContext.fetch(FetchDescriptor<CachedTaskDetailBlob>())) ?? []
             if existing.contains(where: { $0.cacheKey == key }) { continue }
             guard let detail = try? await QualityTaskAPI.taskDetail(
                 projectCode: projectCode,
-                taskId: item.id,
-                spaceId: spaceId
+                taskId: item.id
             ) else { continue }
             try? LocalTaskCache.saveDetail(detail, projectCode: projectCode, taskId: item.id, context: modelContext)
             try? modelContext.save()
@@ -552,4 +509,3 @@ struct MyTasksView: View {
         )
     }
 }
-

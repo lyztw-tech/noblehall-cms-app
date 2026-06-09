@@ -2,7 +2,7 @@ import Foundation
 
 enum APIRequestError: Error, LocalizedError, Sendable {
     case invalidURL
-    /// Release 或非法 http；與 constructionApp `AppConfiguration.validateAPIBaseIsSecureForRequests` 一致。
+    /// Release 或非法 http；對應 `AppConfiguration.validateAPIBaseIsSecureForRequests`。
     case apiMustUseHTTPS
     case invalidResponse
     case httpStatus(code: Int, body: String?)

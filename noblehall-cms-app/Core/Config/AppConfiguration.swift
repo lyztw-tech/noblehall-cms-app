@@ -2,7 +2,7 @@
 //  AppConfiguration.swift
 //  noblehall-cms-app
 //
-//  與 constructionApp 的 `AppConfiguration` 相同策略：環境變數優先、Debug 本機／區網 http、Release 強制 https。
+//  環境解析策略：環境變數優先、Debug 本機／區網 http、Release 強制 https。
 //  Construction Dashboard 後端 API root 為 **`/api/v1`**。
 //
 
@@ -14,11 +14,11 @@ enum AppConfiguration: Sendable {
     private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.71:3003/api/v1"
 
     /// Release fallback；正式環境與 Production.xcconfig 使用同一個後端。
-    private nonisolated static let productionAPIRootURLString = "https://erp.shinefar.lyztw.com/api/v1"
+    private nonisolated static let productionAPIRootURLString = "https://erp.nexa.lyztw.com/api/v1"
 
     /// 1. Scheme 環境變數 `API_BASE_URL`（方便臨時覆蓋）
     /// 2. Info.plist `API_BASE_URL`（由 `.xcconfig` 注入，正式管理方式）
-    /// 3. 依 scheme compilation condition fallback（與施工紀錄 App 相同）
+    /// 3. 依 scheme compilation condition fallback
     nonisolated static var apiRootURL: URL {
         let resolved = resolveAPIRootURL()
         assertSafeBackend(resolved)
@@ -38,9 +38,9 @@ enum AppConfiguration: Sendable {
             return url
         }
         #if NOBLEHALL_ALPHA
-        return URL(string: "https://alpha.erp.shinefar.lyztw.com/api/v1")!
+        return URL(string: "https://alpha.erp.nexa.lyztw.com/api/v1")!
         #elseif NOBLEHALL_PRODUCTION
-        return URL(string: "https://erp.shinefar.lyztw.com/api/v1")!
+        return URL(string: "https://erp.nexa.lyztw.com/api/v1")!
         #else
         #if DEBUG
         return URL(string: debugDefaultAPIRootURLString)!
@@ -107,6 +107,19 @@ enum AppConfiguration: Sendable {
         }()
         let path = u.path.isEmpty ? "" : u.path
         return "\(environmentName) · \(u.scheme ?? "?")://\(authority)\(path)"
+    }
+
+    /// 是否顯示「環境與連線資訊」（登入頁等）。Alpha / Production 版一律隱藏，僅 Debug 顯示。
+    nonisolated static var shouldShowDeveloperConnectionInfo: Bool {
+        #if NOBLEHALL_ALPHA || NOBLEHALL_PRODUCTION
+        return false
+        #else
+        #if DEBUG
+        return true
+        #else
+        return false
+        #endif
+        #endif
     }
 
     private nonisolated static func bundledString(forInfoKey key: String) -> String? {

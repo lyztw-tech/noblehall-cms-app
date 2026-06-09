@@ -2,7 +2,7 @@ import UIKit
 import UserNotifications
 
 /// 註冊通知中心 delegate：前景橫幅、點擊深連結導向任務等。
-final class NoblehallAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+final class AppPushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
@@ -26,7 +26,7 @@ final class NoblehallAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
     ) {
         if let link = NotificationLocalPush.link(from: response.notification.request.content.userInfo) {
             NotificationCenter.default.post(
-                name: .nobleHallNotificationDeepLink,
+                name: .appNotificationDeepLink,
                 object: nil,
                 userInfo: ["link": link]
             )
@@ -41,7 +41,7 @@ final class NoblehallAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
         print("[APNs] didRegister tokenPrefix=\(token.prefix(12)) length=\(token.count)")
         NotificationCenter.default.post(
-            name: .nobleHallRemoteNotificationTokenUpdated,
+            name: .appRemoteNotificationTokenUpdated,
             object: nil,
             userInfo: ["token": token]
         )
@@ -53,7 +53,7 @@ final class NoblehallAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
     ) {
         print("[APNs] didFailToRegister error=\(error.localizedDescription)")
         NotificationCenter.default.post(
-            name: .nobleHallRemoteNotificationTokenFailed,
+            name: .appRemoteNotificationTokenFailed,
             object: nil,
             userInfo: ["error": error]
         )
@@ -66,12 +66,12 @@ final class NoblehallAppDelegate: NSObject, UIApplicationDelegate, UNUserNotific
     ) {
         if let link = NotificationLocalPush.link(from: userInfo) {
             NotificationCenter.default.post(
-                name: .nobleHallNotificationDeepLink,
+                name: .appNotificationDeepLink,
                 object: nil,
                 userInfo: ["link": link]
             )
         }
-        NotificationCenter.default.post(name: .nobleHallRemoteNotificationReceived, object: nil)
+        NotificationCenter.default.post(name: .appRemoteNotificationReceived, object: nil)
         completionHandler(.newData)
     }
 }

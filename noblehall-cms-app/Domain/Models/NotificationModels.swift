@@ -7,7 +7,6 @@ nonisolated struct NotificationDto: Decodable, Sendable, Identifiable, Hashable 
     let body: String?
     let link: String?
     let readAt: Date?
-    let spaceId: String?
     let projectId: String?
     let projectName: String?
     let projectCode: String?
@@ -17,7 +16,7 @@ nonisolated struct NotificationDto: Decodable, Sendable, Identifiable, Hashable 
 
     enum CodingKeys: String, CodingKey {
         case id, type, eventType, title, body, link, linkMobile, linkWeb, readAt
-        case spaceId, tenantId, projectId, projectName, projectCode, createdAt
+        case projectId, projectName, projectCode, createdAt
     }
 
     init(
@@ -27,7 +26,6 @@ nonisolated struct NotificationDto: Decodable, Sendable, Identifiable, Hashable 
         body: String?,
         link: String?,
         readAt: Date?,
-        spaceId: String?,
         projectId: String?,
         projectName: String?,
         projectCode: String?,
@@ -39,7 +37,6 @@ nonisolated struct NotificationDto: Decodable, Sendable, Identifiable, Hashable 
         self.body = body
         self.link = link
         self.readAt = readAt
-        self.spaceId = spaceId
         self.projectId = projectId
         self.projectName = projectName
         self.projectCode = projectCode
@@ -59,8 +56,6 @@ nonisolated struct NotificationDto: Decodable, Sendable, Identifiable, Hashable 
             ?? c.decodeIfPresent(String.self, forKey: .linkMobile)
             ?? c.decodeIfPresent(String.self, forKey: .linkWeb)
         readAt = try c.decodeIfPresent(Date.self, forKey: .readAt)
-        spaceId = try c.decodeIfPresent(String.self, forKey: .spaceId)
-            ?? c.decodeIfPresent(String.self, forKey: .tenantId)
         self.projectId = projectId
         projectName = try c.decodeIfPresent(String.self, forKey: .projectName)
         projectCode = try c.decodeIfPresent(String.self, forKey: .projectCode) ?? projectId
@@ -120,7 +115,6 @@ extension NotificationDto {
             body: body,
             link: link,
             readAt: date,
-            spaceId: spaceId,
             projectId: projectId,
             projectName: projectName,
             projectCode: projectCode,

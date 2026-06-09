@@ -8,7 +8,7 @@ enum OutboxSync {
     private static var flushRunning = false
     private static var flushWaiters: [CheckedContinuation<Void, Never>] = []
 
-    static func flushPending(modelContext: ModelContext, spaceId: String, isOnline: Bool) async {
+    static func flushPending(modelContext: ModelContext, isOnline: Bool) async {
         guard isOnline else { return }
         while flushRunning {
             await withCheckedContinuation { flushWaiters.append($0) }
@@ -21,7 +21,7 @@ enum OutboxSync {
                 next.resume()
             }
         }
-        await TaskCreateOutbox.flushPending(context: modelContext, spaceId: spaceId, isOnline: true)
-        await ExecutionOutbox.flushPending(context: modelContext, spaceId: spaceId, isOnline: true)
+        await TaskCreateOutbox.flushPending(context: modelContext, isOnline: true)
+        await ExecutionOutbox.flushPending(context: modelContext, isOnline: true)
     }
 }

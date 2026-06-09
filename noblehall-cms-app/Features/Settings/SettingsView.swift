@@ -26,7 +26,7 @@ struct SettingsView: View {
                     }
                 }
                 Section("專案") {
-                    LabeledContent("目前專案", value: projectCode)
+                    LabeledContent("目前專案", value: session.selectedProjectName ?? projectCode)
                     Button("切換專案") {
                         session.setSelectedProject(code: nil)
                     }
@@ -48,9 +48,9 @@ struct SettingsView: View {
             .listSectionSpacing(14)
             .listRowBackground(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(NobleHallTheme.cardBackground)
+                    .fill(AppTheme.cardBackground)
             )
-            .nobleHallScreen()
+            .appScreen()
             .navigationTitle("設定")
             .navigationBarTitleDisplayMode(.inline)
             .task(id: projectCode) { await refreshCacheStats() }
@@ -58,9 +58,9 @@ struct SettingsView: View {
                 Task { await refreshCacheStats() }
             }
             .onChange(of: network.isConnected) { _, online in
-                if online, let sid = session.spaceId {
+                if online {
                     Task {
-                        await OutboxSync.flushPending(modelContext: modelContext, spaceId: sid, isOnline: true)
+                        await OutboxSync.flushPending(modelContext: modelContext, isOnline: true)
                         await refreshCacheStats()
                     }
                 }
@@ -82,7 +82,7 @@ struct SettingsView: View {
                         if let progress = planPreload.progressText {
                             Text(progress)
                                 .font(.caption)
-                                .foregroundStyle(NobleHallTheme.secondaryInk)
+                                .foregroundStyle(AppTheme.secondaryInk)
                         }
                     }
                 }
@@ -147,10 +147,9 @@ struct SettingsView: View {
     }
 
     private func redownloadPlanCache() async {
-        guard let sid = session.spaceId, network.isConnected else { return }
+        guard network.isConnected else { return }
         await PlanAssetCache.preloadAll(
             projectCode: projectCode,
-            spaceId: sid,
             context: modelContext,
             force: true
         )
@@ -168,8 +167,8 @@ struct SettingsView: View {
     }
 
     private func logout() async {
-        if network.isConnected, let sid = session.spaceId {
-            await OutboxSync.flushPending(modelContext: modelContext, spaceId: sid, isOnline: true)
+        if network.isConnected {
+            await OutboxSync.flushPending(modelContext: modelContext, isOnline: true)
         }
         do { try await AuthAPI.logout() } catch {}
         do {
