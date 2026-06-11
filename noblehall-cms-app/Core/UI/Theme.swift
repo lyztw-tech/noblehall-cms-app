@@ -4,17 +4,87 @@ import UIKit
 // MARK: - App Design System
 
 enum AppTheme {
-    static let warmBackground = Color(red: 0.969, green: 0.953, blue: 0.918)
-    static let cardBackground = Color(red: 1.000, green: 0.988, blue: 0.965)
-    static let ink = Color(red: 0.157, green: 0.137, blue: 0.122)
-    static let secondaryInk = Color(red: 0.478, green: 0.443, blue: 0.408)
-    static let brandGold = Color(red: 0.604, green: 0.478, blue: 0.275)
-    static let softGold = Color(red: 0.718, green: 0.647, blue: 0.478)
-    static let hairline = Color(red: 0.886, green: 0.847, blue: 0.765)
-    static let success = Color(red: 0.282, green: 0.502, blue: 0.376)
-    static let warning = Color(red: 0.777, green: 0.471, blue: 0.184)
+    static let warmBackground = dynamicColor(
+        light: UIColor(red: 0.969, green: 0.953, blue: 0.918, alpha: 1),
+        dark: UIColor(red: 0.078, green: 0.067, blue: 0.055, alpha: 1)
+    )
+    static let cardBackground = dynamicColor(
+        light: UIColor(red: 1.000, green: 0.988, blue: 0.965, alpha: 1),
+        dark: UIColor(red: 0.133, green: 0.114, blue: 0.094, alpha: 1)
+    )
+    static let ink = dynamicColor(
+        light: UIColor(red: 0.157, green: 0.137, blue: 0.122, alpha: 1),
+        dark: UIColor(red: 0.957, green: 0.933, blue: 0.886, alpha: 1)
+    )
+    static let secondaryInk = dynamicColor(
+        light: UIColor(red: 0.478, green: 0.443, blue: 0.408, alpha: 1),
+        dark: UIColor(red: 0.765, green: 0.714, blue: 0.647, alpha: 1)
+    )
+    static let brandGold = dynamicColor(
+        light: UIColor(red: 0.604, green: 0.478, blue: 0.275, alpha: 1),
+        dark: UIColor(red: 0.839, green: 0.694, blue: 0.424, alpha: 1)
+    )
+    static let softGold = dynamicColor(
+        light: UIColor(red: 0.718, green: 0.647, blue: 0.478, alpha: 1),
+        dark: UIColor(red: 0.910, green: 0.824, blue: 0.624, alpha: 1)
+    )
+    static let hairline = dynamicColor(
+        light: UIColor(red: 0.886, green: 0.847, blue: 0.765, alpha: 1),
+        dark: UIColor(red: 0.298, green: 0.255, blue: 0.204, alpha: 1)
+    )
+    static let success = dynamicColor(
+        light: UIColor(red: 0.282, green: 0.502, blue: 0.376, alpha: 1),
+        dark: UIColor(red: 0.443, green: 0.718, blue: 0.565, alpha: 1)
+    )
+    static let warning = dynamicColor(
+        light: UIColor(red: 0.777, green: 0.471, blue: 0.184, alpha: 1),
+        dark: UIColor(red: 0.949, green: 0.631, blue: 0.325, alpha: 1)
+    )
 
-    static var cardShadow: Color { Color.black.opacity(0.06) }
+    static var cardShadow: Color {
+        dynamicColor(
+            light: UIColor.black.withAlphaComponent(0.06),
+            dark: UIColor.black.withAlphaComponent(0.30)
+        )
+    }
+
+    private static func dynamicColor(light: UIColor, dark: UIColor) -> Color {
+        Color(UIColor { traitCollection in
+            traitCollection.userInterfaceStyle == .dark ? dark : light
+        })
+    }
+}
+
+enum AppAppearanceMode: String, CaseIterable, Identifiable {
+    static let storageKey = "appAppearanceMode"
+
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system:
+            return "跟隨系統"
+        case .light:
+            return "淺色"
+        case .dark:
+            return "深色"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system:
+            return nil
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        }
+    }
 }
 
 struct AppScreenBackground: ViewModifier {

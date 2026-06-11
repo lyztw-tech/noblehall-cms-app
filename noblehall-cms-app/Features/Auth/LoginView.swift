@@ -33,25 +33,43 @@ struct LoginView: View {
                             Text("帳號")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(AppTheme.ink)
-                            TextField("請輸入帳號", text: $account)
+                            TextField(
+                                "請輸入帳號",
+                                text: $account,
+                                prompt: Text("請輸入帳號").foregroundColor(AppTheme.secondaryInk.opacity(0.7))
+                            )
                                 .textContentType(.username)
                                 .keyboardType(.default)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .padding(14)
-                                .background(Color.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(AppTheme.hairline, lineWidth: 1))
+                                .foregroundStyle(AppTheme.ink)
+                                .tint(AppTheme.brandGold)
+                                .background(AppTheme.cardBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(AppTheme.hairline.opacity(0.85), lineWidth: 1)
+                                )
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text("密碼")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(AppTheme.ink)
-                            SecureField("請輸入密碼", text: $password)
+                            SecureField(
+                                "請輸入密碼",
+                                text: $password,
+                                prompt: Text("請輸入密碼").foregroundColor(AppTheme.secondaryInk.opacity(0.7))
+                            )
                                 .textContentType(.password)
                                 .padding(14)
-                                .background(Color.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(AppTheme.hairline, lineWidth: 1))
+                                .foregroundStyle(AppTheme.ink)
+                                .tint(AppTheme.brandGold)
+                                .background(AppTheme.cardBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(AppTheme.hairline.opacity(0.85), lineWidth: 1)
+                                )
                         }
 
                         if let errorMessage {

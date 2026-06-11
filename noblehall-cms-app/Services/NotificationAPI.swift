@@ -12,8 +12,12 @@ enum NotificationAPI: Sendable {
     }
 
     private static var apnsEnvironment: String {
-        AppConfiguration.environmentName.trimmingCharacters(in: .whitespacesAndNewlines)
-            .caseInsensitiveCompare("Production") == .orderedSame ? "production" : "sandbox"
+        if let raw = Bundle.main.object(forInfoDictionaryKey: "APS_ENVIRONMENT") as? String {
+            let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.caseInsensitiveCompare("production") == .orderedSame ? "production" : "sandbox"
+        }
+        let environmentName = AppConfiguration.environmentName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return environmentName.caseInsensitiveCompare("Production") == .orderedSame ? "production" : "sandbox"
     }
 
     static func list(

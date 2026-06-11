@@ -7,6 +7,7 @@ struct SettingsView: View {
     @Environment(NetworkPathMonitor.self) private var network
     @Environment(\.modelContext) private var modelContext
     @Bindable private var planPreload = PlanAssetPreloadStore.shared
+    @AppStorage(AppAppearanceMode.storageKey) private var appAppearanceMode = AppAppearanceMode.system.rawValue
 
     @State private var offlineUsedBytes: Int64 = 0
     @State private var availableBytes: Int64?
@@ -22,6 +23,13 @@ struct SettingsView: View {
                         LabeledContent("帳號", value: u.username)
                         if let email = u.email, !email.isEmpty {
                             LabeledContent("Email", value: email)
+                        }
+                    }
+                }
+                Section("外觀") {
+                    Picker("外觀模式", selection: $appAppearanceMode) {
+                        ForEach(AppAppearanceMode.allCases) { mode in
+                            Text(mode.title).tag(mode.rawValue)
                         }
                     }
                 }

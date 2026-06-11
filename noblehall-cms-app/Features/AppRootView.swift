@@ -9,6 +9,7 @@ struct AppRootView: View {
     @Environment(NotificationNavigationCoordinator.self) private var notificationNav
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(AppAppearanceMode.storageKey) private var appAppearanceMode = AppAppearanceMode.system.rawValue
     @State private var appUpdateGate = AppUpdateGate()
     @State private var showLaunchSplash = true
     @State private var latestRemoteNotificationToken: String?
@@ -25,6 +26,7 @@ struct AppRootView: View {
             }
         }
         .tint(AppTheme.brandGold)
+        .preferredColorScheme(AppAppearanceMode(rawValue: appAppearanceMode)?.colorScheme)
         .fullScreenCover(item: taskDetailBinding) { presentation in
             TaskDetailView(
                 projectCode: presentation.projectCode,
@@ -150,6 +152,8 @@ struct AppRootView: View {
         do {
             try await NotificationAPI.registerAPNsDeviceToken(token)
             print("[APNs] device token uploaded")
+        } catch APIRequestError.httpStatus(let code, let body) {
+            print("[APNs] device token upload failed http=\(code) body=\(body ?? "")")
         } catch {
             print("[APNs] device token upload failed: \(error.localizedDescription)")
         }

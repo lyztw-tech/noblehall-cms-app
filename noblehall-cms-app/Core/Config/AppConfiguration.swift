@@ -11,7 +11,7 @@ import Foundation
 /// API root（含路徑 **`/api/v1`**），所有 `APIClient` 請求皆相對於此。
 enum AppConfiguration: Sendable {
     /// DEBUG fallback；主要環境請從 Xcode `.xcconfig` 的 `API_BASE_URL` 注入。
-    private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.71:3003/api/v1"
+    private nonisolated static let debugDefaultAPIRootURLString = "http://192.168.0.139:3003/api/v1"
 
     /// Release fallback；正式環境與 Production.xcconfig 使用同一個後端。
     private nonisolated static let productionAPIRootURLString = "https://erp.nexa.lyztw.com/api/v1"
